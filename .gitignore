@@ -31,3 +31,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Downloaded third-party fixtures; never commit or redistribute these files.
+/.external/

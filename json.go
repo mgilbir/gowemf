@@ -1,0 +1,48 @@
+package gowemf
+
+import "encoding/json"
+
+func (v GradientVertices) MarshalJSON() ([]byte, error) {
+	vertices := make([]GradientVertex, v.Len())
+	for i := range vertices {
+		vertices[i] = v.At(i)
+	}
+	return json.Marshal(vertices)
+}
+
+// MarshalJSON emits coordinate values, not the private wire representation.
+// Serialization allocates output proportional to the (already bounded) array.
+func (p Points) MarshalJSON() ([]byte, error) {
+	v := make([]Point, p.Len())
+	for i := range v {
+		v[i] = p.At(i)
+	}
+	return json.Marshal(v)
+}
+func (a Integers) MarshalJSON() ([]byte, error) {
+	v := make([]uint32, a.Len())
+	for i := range v {
+		v[i] = a.At(i)
+	}
+	return json.Marshal(v)
+}
+func (b Boxes) MarshalJSON() ([]byte, error) {
+	v := make([]Box, b.Len())
+	for i := range v {
+		v[i] = b.At(i)
+	}
+	return json.Marshal(v)
+}
+
+func (f Format) String() string {
+	switch f {
+	case WMF:
+		return "WMF"
+	case EMF:
+		return "EMF"
+	case EMFPlus:
+		return "EMF+"
+	default:
+		return "unknown"
+	}
+}

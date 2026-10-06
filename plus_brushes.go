@@ -31,11 +31,10 @@ func (c *cursor) textureBrush() *PlusTextureBrush {
 		t.Transform = c.matrix()
 	}
 	if c.err == nil && len(c.b)-c.pos > 3 {
-		if c.dword()>>12 != 0xdbc01 {
-			c.bad("texture image signature")
+		if v := c.childObject(5, uint64(len(c.b)-c.pos), c.objectDepth+1); v != nil {
+			image := v.(PlusImage)
+			t.Image = &image
 		}
-		image := c.plusImage()
-		t.Image = &image
 	}
 	return t
 }
@@ -59,32 +58,11 @@ func (c *cursor) pathGradient() *PlusPathGradient {
 			c.bad("negative boundary path size")
 			return g
 		}
-		raw := c.take(uint64(n))
-		if c.err != nil {
-			return g
-		}
-		remaining := c.limits.MaxObjectBytes - c.allocated
-		if remaining == 0 || uint64(len(raw)) > remaining {
-			c.err = failure(c.base+c.pos, "boundary path budget", ErrLimit)
-			return g
-		}
-		limits := c.limits
-		limits.MaxObjectBytes = remaining
-		v, err := DecodePlusObject(3, raw, limits)
-		if err != nil {
-			if pe, ok := err.(*ParseError); ok {
-				c.err = &ParseError{c.base + c.pos - len(raw) + pe.Offset, pe.Field, pe.Err}
-			} else {
-				c.err = err
-			}
+		v := c.childObject(3, uint64(n), c.objectDepth+1)
+		if v == nil {
 			return g
 		}
 		path := v.(PlusPath)
-		if path.Points.relative != nil {
-			if !c.allocation(uint64(len(path.Points.relative))*16+uint64(len(path.Types)), 1) {
-				return g
-			}
-		}
 		g.BoundaryPath = &path
 	} else {
 		n := c.long()

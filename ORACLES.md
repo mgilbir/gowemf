@@ -31,6 +31,11 @@ WMF region size/count metadata, palette selection, EMF+ DPI and generated path
 point/type arrays. They do **not** compare all fields,
 Bezier normalization, text shaping, complete object semantics, or rendered pixels.
 
+Generated pen records additionally compare both adjustable-arrow custom caps
+against POI's public record dump: dimensions, inset, fill state, styles, miter
+limit and width scale. Default cap paths and extended raw pixel values have
+spec-derived generated tests; there is no Windows render-equivalence claim.
+
 Intentional normalization:
 
 - POI excludes WMF EOF from its record list; gowemf includes it.
@@ -106,6 +111,10 @@ handles, and explicit 8-byte-per-pixel native-index bounds for compressed DIBs.
 An unaligned bitmap-buffer regression also failed before removing the unjustified
 offset-alignment restriction; record alignment and all byte-range bounds remain
 enforced. Multi-string text tests reject spans that overlap a later descriptor.
+Custom-cap tests were observed failing before decoder support was added. Planted
+and restored defects also demonstrated that tests reject reset nested-allocation
+budgets and palette bytes incorrectly counted as bitmap pixels. Malformed path
+topology was accepted before its regression and validation fix.
 
 ## Render oracles
 

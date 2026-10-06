@@ -413,6 +413,21 @@ func FuzzDecode(f *testing.F) {
 	relativePath := append(longs(0, 3, 0x800), []byte{1, 2, 3, 4, 5, 6, 0x41, 0, 0x42, 1}...)
 	put32(relativePath, 0, 0xdbc01002)
 	f.Add(uint8(0), append([]byte{3}, relativePath...))
+	f.Add(uint8(0), append([]byte{9}, arrowCapFixture()...))
+	f.Add(uint8(0), append([]byte{9}, defaultCapFixture(relativePathFixture(10), relativePathFixture(10))...))
+	f.Add(uint8(0), append([]byte{2}, penWithCapsFixture(arrowCapFixture(), arrowCapFixture())...))
+	for _, format := range []uint32{PixelFormat1bppIndexed, PixelFormat4bppIndexed, PixelFormat8bppIndexed, PixelFormat16bppGrayScale, PixelFormat16bppRGB555, PixelFormat16bppRGB565, PixelFormat16bppARGB1555, PixelFormat24bppRGB, PixelFormat32bppRGB, PixelFormat32bppARGB, PixelFormat32bppPARGB, PixelFormat48bppRGB, PixelFormat64bppARGB, PixelFormat64bppPARGB} {
+		stride := int32(4)
+		if (format>>8)&255 > 32 {
+			stride = 8
+		}
+		data := make([]byte, int(stride))
+		if format&0x10000 != 0 {
+			data = append(longs(0, 1, -1), data...)
+		}
+		p := PlusImage{Type: 1, Width: 1, Height: 1, Stride: stride, PixelFormat: format, Data: data}
+		f.Add(uint8(0), append([]byte{5}, rawPlusImageObject(p)...))
+	}
 	for typ, body := range map[byte][]byte{
 		1: gradientBody(0),
 		3: append(append(longs(0, 2, 0x4000), words(-1, 2, 3, -4)...), 0, 1, 0, 0),

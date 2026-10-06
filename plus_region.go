@@ -32,7 +32,9 @@ func (c *cursor) plusRegion() PlusRegion {
 		c.bad("EMF+ region node count")
 		return PlusRegion{}
 	}
-	remaining := c.limits.MaxObjectBytes - n*256
+	if !c.allocation(n, 256) {
+		return PlusRegion{}
+	}
 	region := PlusRegion{Nodes: make([]PlusRegionNode, int(n))}
 	stack := make([]regionSlot, 1, int(n))
 	stack[0] = regionSlot{parent: -1, depth: 1}
@@ -43,7 +45,7 @@ func (c *cursor) plusRegion() PlusRegion {
 		}
 		slot := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if slot.depth > c.limits.MaxNesting {
+		if slot.depth > c.limits.MaxNesting-(c.objectDepth-1) {
 			c.err = failure(c.pos, "EMF+ region nesting", ErrLimit)
 			break
 		}
@@ -59,7 +61,7 @@ func (c *cursor) plusRegion() PlusRegion {
 		node.Left, node.Right = -1, -1
 		switch node.Type {
 		case 1, 2, 3, 4, 5:
-			if slot.depth >= c.limits.MaxNesting {
+			if slot.depth >= c.limits.MaxNesting-(c.objectDepth-1) {
 				c.err = failure(c.pos, "EMF+ region nesting", ErrLimit)
 				break
 			}
@@ -76,30 +78,11 @@ func (c *cursor) plusRegion() PlusRegion {
 				c.bad("negative region path size")
 				break
 			}
-			raw := c.take(uint64(length))
-			if c.err != nil {
-				break
-			}
-			if uint64(len(raw)) > remaining || remaining == 0 {
-				c.err = failure(c.pos, "EMF+ region path budget", ErrLimit)
-				break
-			}
-			limits := c.limits
-			limits.MaxObjectBytes = remaining
-			v, err := DecodePlusObject(3, raw, limits)
-			if err != nil {
-				c.err = err
+			v := c.childObject(3, uint64(length), c.objectDepth+slot.depth)
+			if v == nil {
 				break
 			}
 			node.Path = v.(PlusPath)
-			if node.Path.Points.relative != nil {
-				cost := uint64(len(node.Path.Points.relative))*16 + uint64(len(node.Path.Types))
-				if cost > remaining {
-					c.err = failure(c.pos, "EMF+ region path budget", ErrLimit)
-					break
-				}
-				remaining -= cost
-			}
 		case 0x10000002, 0x10000003:
 		default:
 			c.unsupported()

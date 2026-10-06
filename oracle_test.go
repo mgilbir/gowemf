@@ -69,6 +69,55 @@ func TestPOIOracle(t *testing.T) {
 	if os.Getenv("GOWEMF_ORACLE") != "1" {
 		t.Skip("run make test-oracle")
 	}
+	t.Run("generated-custom-caps", func(t *testing.T) {
+		cap := arrowCapFixture()
+		pen := penWithCapsFixture(cap, cap)
+		object := testRecord(EMFPlus, PlusObjectRecord, 0x0201, pen)
+		data := emfFixture(plusComment(plusHeader(), object.Raw, plusRecord(PlusEndOfFileRecord, nil)))
+		path := filepath.Join(t.TempDir(), "caps.emf")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		v, err := DecodePlusObject(2, pen, DecodeLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded := v.(PlusPen)
+		type arrow struct {
+			Width, Height, MiddleInset, MiterLimit, WidthScale float64
+			IsFilled                                           bool
+			StartCap, EndCap, Join                             string
+		}
+		found := false
+		for _, record := range poiRecords(t, path) {
+			if record.Format == "EMF+" && record.Type == PlusObjectRecord {
+				found = true
+				var props struct {
+					Flags                        uint32
+					PenWidth                     float64
+					CustomStartCap, CustomEndCap *arrow
+				}
+				if err := json.Unmarshal(record.Body["objectData"], &props); err != nil {
+					t.Fatal(err)
+				}
+				if props.Flags != decoded.Flags || props.PenWidth != decoded.Width {
+					t.Fatal("pen fields differ", props)
+				}
+				for i, cap := range []*arrow{props.CustomStartCap, props.CustomEndCap} {
+					want := []*PlusCustomLineCap{decoded.CustomStartCap, decoded.CustomEndCap}[i].Arrow
+					capNames := map[uint32]string{0: "FLAT", 1: "SQUARE", 2: "ROUND", 3: "TRIANGLE"}
+					joinNames := map[uint32]string{0: "MITER", 1: "BEVEL", 2: "ROUND", 3: "MITER_CLIPPED"}
+					if cap == nil || cap.Width != want.Width || cap.Height != want.Height || cap.MiddleInset != want.MiddleInset || cap.IsFilled != want.Filled || cap.MiterLimit != want.LineMiterLimit || cap.WidthScale != want.WidthScale || cap.StartCap != capNames[want.LineStartCap] || cap.EndCap != capNames[want.LineEndCap] || cap.Join != joinNames[want.LineJoin] {
+						t.Fatal("custom cap differs from POI", i, cap, want)
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatal("POI omitted pen object")
+		}
+		t.Log("compared pen envelope and both adjustable-arrow custom cap field sets")
+	})
 	for _, f := range corpus.Files {
 		t.Run(f.Path, func(t *testing.T) {
 			path := filepath.Join(".external", "poi", filepath.FromSlash(f.Path))

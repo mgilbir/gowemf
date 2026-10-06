@@ -48,9 +48,10 @@ func (d *DIB) rawAlphaImage() (*image.RGBA, error) {
 	return out, nil
 }
 
-// Image decodes EMF+ PNG/JPEG or raw 24-bit RGB / 32-bit RGB, ARGB and PARGB
-// bitmaps. Metafiles and other pixel formats return ErrUnsupported. All public
-// fields are revalidated before allocation, including caller-constructed values.
+// Image decodes EMF+ PNG/JPEG and all defined raw pixel formats. Extended
+// channels retain 16-bit precision in Gray16, NRGBA64 or RGBA64 outputs. Indexed
+// colors retain palette alpha; premultiplied formats return RGBA/RGBA64.
+// All public fields are revalidated, including caller-constructed values.
 func (p PlusImage) Image(limits ImageLimits) (image.Image, error) {
 	l := limits.defaults()
 	if uint64(len(p.Data)) > l.MaxBytes {
@@ -65,65 +66,7 @@ func (p PlusImage) Image(limits ImageLimits) (image.Image, error) {
 	if p.BitmapType != 0 {
 		return nil, malformed(0, "EMF+ bitmap data type")
 	}
-	// MS-EMFPLUS 2.1.1.24: PixelFormat24bppRGB, 32bppRGB, 32bppARGB,
-	// and 32bppPARGB. Other formats need separate palette/channel handling.
-	bpp := uint64(4)
-	alpha, premult := false, false
-	switch p.PixelFormat {
-	case 0x21808:
-		bpp = 3
-	case 0x22009:
-	case 0x26200a:
-		alpha = true
-	case 0xe200b:
-		alpha = true
-		premult = true
-	default:
-		return nil, failure(0, "EMF+ pixel format", ErrUnsupported)
-	}
-	if p.Width <= 0 || p.Height <= 0 || p.Stride == 0 || p.Stride%4 != 0 {
-		return nil, malformed(0, "EMF+ image dimensions")
-	}
-	w, h := uint64(p.Width), uint64(p.Height)
-	if w*h > l.MaxPixels || w*h > uint64(int(^uint(0)>>1))/4 {
-		return nil, failure(0, "EMF+ image pixels", ErrLimit)
-	}
-	stride := int64(p.Stride)
-	if stride < 0 {
-		stride = -stride
-	}
-	if uint64(stride) < w*bpp || uint64(stride)*h > uint64(len(p.Data)) {
-		return nil, malformed(0, "EMF+ image buffer")
-	}
-	var out image.Image
-	var dst []byte
-	if premult {
-		im := image.NewRGBA(image.Rect(0, 0, int(w), int(h)))
-		out, dst = im, im.Pix
-	} else {
-		im := image.NewNRGBA(image.Rect(0, 0, int(w), int(h)))
-		out, dst = im, im.Pix
-	}
-	for y := 0; y < int(h); y++ {
-		sy := y
-		if p.Stride < 0 {
-			sy = int(h) - 1 - y
-		}
-		row := p.Data[int64(sy)*stride : int64(sy+1)*stride]
-		for x := 0; x < int(w); x++ {
-			src := row[x*int(bpp):]
-			a := byte(255)
-			if alpha {
-				a = src[3]
-			}
-			if premult && (src[0] > a || src[1] > a || src[2] > a) {
-				return nil, malformed(0, "non-premultiplied EMF+ bitmap")
-			}
-			i := (y*int(w) + x) * 4
-			dst[i], dst[i+1], dst[i+2], dst[i+3] = src[2], src[1], src[0], a
-		}
-	}
-	return out, nil
+	return p.rawBitmapImage(l)
 }
 
 func decodeEncodedImage(data []byte, l ImageLimits) (image.Image, error) {

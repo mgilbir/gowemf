@@ -12,7 +12,7 @@ var ErrUnsupported = errors.New("unsupported metafile record or encoding")
 // DecodeLimits bounds typed array processing and assembled object sizes.
 // Zero fields select finite defaults. These limits supplement framing Limits.
 type DecodeLimits struct {
-	MaxNesting     uint32 // default 256 region-tree levels
+	MaxNesting     uint32 // default 256 nested object/region-tree levels
 	MaxElements    uint64 // default 1,000,000 per array
 	MaxObjectBytes uint64 // default 16 MiB
 }
@@ -275,11 +275,12 @@ func Decode(r Record, limits DecodeLimits) (any, error) {
 }
 
 type cursor struct {
-	b         []byte
-	pos, base int
-	limits    DecodeLimits
-	err       error
-	allocated uint64
+	b           []byte
+	pos, base   int
+	limits      DecodeLimits
+	err         error
+	allocated   uint64
+	objectDepth uint32
 }
 
 func (c *cursor) allocation(n, width uint64) bool {

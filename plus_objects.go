@@ -28,6 +28,7 @@ type PlusImage struct {
 }
 type PlusImageAttributes struct{ WrapMode, ClampColor, ObjectClamp uint32 }
 type PlusPen struct {
+	CustomStartCap, CustomEndCap                          *PlusCustomLineCap
 	Flags, Unit                                           uint32
 	Width                                                 float64
 	Transform                                             Matrix
@@ -51,10 +52,18 @@ type PlusStringFormat struct {
 // metafiles are exposed, not recursively parsed; the caller owns nesting policy.
 func DecodePlusObject(typ uint8, data []byte, limits DecodeLimits) (any, error) {
 	l := limits.defaults()
-	if uint64(len(data)) > l.MaxObjectBytes {
-		return nil, failure(0, "EMF+ object bytes", ErrLimit)
+	v, _, err := decodePlusObject(typ, data, l, 0, 1, 0)
+	return v, err
+}
+
+func decodePlusObject(typ uint8, data []byte, l DecodeLimits, base int, depth uint32, allocated uint64) (any, uint64, error) {
+	if depth > l.MaxNesting {
+		return nil, allocated, failure(base, "EMF+ object nesting", ErrLimit)
 	}
-	c := cursor{b: data, limits: l}
+	if uint64(len(data)) > l.MaxObjectBytes {
+		return nil, allocated, failure(base, "EMF+ object bytes", ErrLimit)
+	}
+	c := cursor{b: data, limits: l, base: base, objectDepth: depth, allocated: allocated}
 	version := c.dword()
 	if version>>12 != 0xdbc01 {
 		c.bad("EMF+ object graphics signature")
@@ -70,14 +79,14 @@ func DecodePlusObject(typ uint8, data []byte, limits DecodeLimits) (any, error) 
 		flags := c.dword()
 		p := PlusPath{Flags: flags}
 		if flags & ^uint32(0x4800) != 0 {
-			return nil, failure(c.pos, "EMF+ path flags", ErrUnsupported)
+			return nil, c.allocated, failure(c.base+c.pos, "EMF+ path flags", ErrUnsupported)
 		}
 		p.Points = c.plusPoints(n, uint16(flags))
 		if flags&0x800 == 0 {
 			p.Types = c.elements(n, 1)
 		} else if c.err == nil {
 			if !c.allocation(n, 1) {
-				return nil, c.err
+				return nil, c.allocated, c.err
 			}
 			p.Types = make([]byte, int(n))
 			used := 0
@@ -91,10 +100,20 @@ func DecodePlusObject(typ uint8, data []byte, limits DecodeLimits) (any, error) 
 					c.bad("EMF+ path type run")
 					break
 				}
+				kind := run[1] & 15
+				if (kind == 3 && run[0]&128 == 0) || (kind == 1 && run[0]&128 != 0) {
+					c.bad("inconsistent path type run Bezier flag")
+					break
+				}
 				for i := 0; i < count; i++ {
 					p.Types[used+i] = run[1]
 				}
 				used += count
+			}
+		}
+		if c.err == nil {
+			if err := p.Validate(); err != nil {
+				c.bad(err.(*ParseError).Field)
 			}
 		}
 		v = p
@@ -121,6 +140,8 @@ func DecodePlusObject(typ uint8, data []byte, limits DecodeLimits) (any, error) 
 		c.dword()
 		v = PlusImageAttributes{c.dword(), c.dword(), c.dword()}
 		c.dword()
+	case 9:
+		v = c.customLineCap()
 	default:
 		v = c.unsupported()
 	}
@@ -128,9 +149,27 @@ func DecodePlusObject(typ uint8, data []byte, limits DecodeLimits) (any, error) 
 		c.bad("extra EMF+ object data")
 	}
 	if c.err != nil {
-		return nil, c.err
+		return nil, c.allocated, c.err
 	}
-	return v, nil
+	return v, c.allocated, nil
+}
+
+// childObject shares the enclosing object's expanded-allocation budget and
+// keeps errors relative to the outer input. Taking the span and checking depth
+// happens before decoding; no nested decoder gets a fresh allocation allowance.
+func (c *cursor) childObject(typ uint8, n uint64, depth uint32) any {
+	start := c.pos
+	raw := c.take(n)
+	if c.err != nil {
+		return nil
+	}
+	v, allocated, err := decodePlusObject(typ, raw, c.limits, c.base+start, depth, c.allocated)
+	if err != nil {
+		c.err = err
+		return nil
+	}
+	c.allocated = allocated
+	return v
 }
 
 func (c *cursor) plusBrush() PlusBrush {
@@ -159,10 +198,10 @@ func (c *cursor) plusPen() PlusPen {
 		c.bad("EMF+ pen type")
 	}
 	p := PlusPen{Flags: c.dword(), Unit: c.dword(), Width: c.float(), Transform: Identity()}
-	if p.Flags & ^uint32(0x7ff) != 0 {
+	if p.Flags & ^uint32(0x1fff) != 0 {
 		c.unsupported()
 		return p
-	} // custom caps need their own decoder
+	}
 	if p.Flags&1 != 0 {
 		p.Transform = c.matrix()
 	}
@@ -196,10 +235,21 @@ func (c *cursor) plusPen() PlusPen {
 	if p.Flags&1024 != 0 {
 		p.Compound = c.floats(uint64(c.dword()))
 	}
-	if c.dword()>>12 != 0xdbc01 {
-		c.bad("EMF+ pen brush signature")
+	if p.Flags&0x800 != 0 {
+		if v := c.childObject(9, uint64(c.dword()), c.objectDepth+1); v != nil {
+			cap := v.(PlusCustomLineCap)
+			p.CustomStartCap = &cap
+		}
 	}
-	p.Brush = c.plusBrush()
+	if p.Flags&0x1000 != 0 {
+		if v := c.childObject(9, uint64(c.dword()), c.objectDepth+1); v != nil {
+			cap := v.(PlusCustomLineCap)
+			p.CustomEndCap = &cap
+		}
+	}
+	if v := c.childObject(1, uint64(len(c.b)-c.pos), c.objectDepth+1); v != nil {
+		p.Brush = v.(PlusBrush)
+	}
 	return p
 }
 
@@ -233,21 +283,14 @@ func (c *cursor) plusImage() PlusImage {
 		}
 		p.Data = c.take(uint64(len(c.b) - c.pos))
 		if p.BitmapType == 0 {
-			// Indexed bitmap data starts with a palette; other layouts begin with
-			// pixels. Full pixel-format interpretation belongs to the image decoder.
-			stride := int64(p.Stride)
-			if stride < 0 {
-				stride = -stride
-			}
-			if p.Width <= 0 || p.Height <= 0 || stride == 0 || stride%4 != 0 {
-				c.bad("EMF+ bitmap dimensions or stride")
-			}
-			bpp := uint64((p.PixelFormat >> 8) & 255)
-			if bpp == 0 || uint64(p.Width)*bpp > uint64(stride)*8 {
-				c.bad("EMF+ bitmap row")
-			}
-			if uint64(stride)*uint64(p.Height) > uint64(len(p.Data)) {
-				c.bad("EMF+ bitmap pixels")
+			if c.err == nil {
+				if _, err := p.bitmapLayout(c.limits.MaxElements); err != nil {
+					if pe, ok := err.(*ParseError); ok {
+						c.err = &ParseError{c.base + c.pos - len(p.Data) + pe.Offset, pe.Field, pe.Err}
+					} else {
+						c.err = err
+					}
+				}
 			}
 		}
 	case 2:

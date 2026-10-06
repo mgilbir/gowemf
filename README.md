@@ -16,7 +16,7 @@ inventory and outstanding format coverage are explicit in [COVERAGE.md](COVERAGE
 | --- | --- | --- |
 | MS-WMF | Standard/placeable framing; core drawing/state/object records; text; DIB and Bitmap16 layouts; enhanced-EMF fragment decoding and explicit checksummed extraction | Other escape subtypes; device-dependent bitmap color realization |
 | MS-EMF | Framing; geometry/transforms/paths; objects; text; regions; palettes; gradients; raster transfers; logical color spaces, ICM/profile and color-adjustment records | Header/font extensions remain partially opaque; driver/OpenGL extensions; playback-level color adjustment/proofing |
-| MS-EMFPLUS | Drawing/property/transform records including curves, driver strings and containers; object continuation; all five brush families, pens, paths, regions, images, fonts, string formats, image attributes | Custom caps, effects/terminal-server records, StrokeFillPath, additional bitmap pixel formats |
+| MS-EMFPLUS | Drawing/property/transform records including curves, driver strings and containers; object continuation; all five brush families; pens/custom caps; validated paths; regions; images in every defined raw pixel format; fonts/string formats/image attributes | Effects/terminal-server records, StrokeFillPath, GIF/TIFF compressed images |
 
 Unknown records are exposed as raw views. Acceptance by the framing parser is
 **not** a claim that record bodies are valid or supported for playback. `Decode`
@@ -84,7 +84,9 @@ does not imply support for every encoding or extension it can contain.
 WMF packed DIBs. `DIB.Image()` decodes RGB, bitfields, indexed colors, RLE4/RLE8,
 PNG and JPEG. `DIB.AlphaImage()` applies the premultiplied BGRA interpretation
 required by AlphaBlend; ordinary RGB32 is opaque. `PlusImage.Image()` decodes
-PNG/JPEG and the supported EMF+ RGB/ARGB/PARGB formats. These use only Go's standard
+PNG/JPEG and all defined raw EMF+ formats, including indexed palettes, grayscale,
+RGB555/565/ARGB1555 and 48/64-bit RGB/ARGB/PARGB. High-depth pixels retain 16-bit
+channels in Go's `Gray16`, `NRGBA64`, or `RGBA64` image types. These use only Go's standard
 library. Image dimensions and byte/pixel budgets are checked before allocation.
 
 ### Color management
@@ -135,8 +137,9 @@ Zero-valued limits select finite defaults:
 - Records: 1,000,000, including outer and nested EMF+ records.
 - Typed arrays: 1,000,000 elements; 16 MiB record/object bytes and a separate
   cumulative 16 MiB expanded-array allocation budget per decode.
-- Region trees: 256 levels, parsed iteratively, with conservative node-storage
-  accounting against the object budget.
+- Nested EMF+ objects and region trees: 256 levels, with conservative region-node
+  storage accounting. Pens, caps, brushes, paths and images share the enclosing
+  decoded-allocation budget rather than resetting it for each nested object.
 - Command stream: 65,536 object slots and 1,024 saved states.
 - Bitmap decoding: 16 MiB encoded input and 16,000,000 output pixels. Returned
   images and codec temporary storage are additional to the input buffer.

@@ -95,8 +95,8 @@ palette color realization and raster/compositing operations belong to playback.
 - Coordinates: finite float32, signed int16, and signed variable-width 7/15-bit
   relative points. Relative arrays are cumulatively decoded under an allocation
   budget. Path point-type RLE is expanded with bounded run counts.
-- Objects: solid/hatch/linear-gradient/path-gradient/texture brushes; pens including standard optional
-  transform/cap/join/dash/compound fields; paths; binary region trees; bitmap and
+- Objects: solid/hatch/linear-gradient/path-gradient/texture brushes; pens including optional
+  transform/cap/join/dash/compound fields and inline custom caps; paths; binary region trees; bitmap and
   embedded-metafile image envelopes; fonts; string formats; image attributes.
 - Linear gradients retain transforms, gamma flag, wrap mode, preset ARGB colors,
   and vertical/horizontal blend factors. Proportions and factor endpoints are
@@ -111,12 +111,19 @@ gradients retain center/surrounding colors, point/path boundaries, transforms,
 blend patterns and focus scales, with nested path allocations sharing the
 containing object's budget. Focus scales and incompatible blend flags are checked.
 
-Custom pen caps, StrokeFillPath,
+Custom line caps support both default path-based and adjustable-arrow forms,
+as standalone type-9 objects and in pens. Fill/stroke paths, styles, insets,
+scales, finite dimensions and mandatory zero hotspots are checked. Nested cap,
+brush, image and path decoders share an allocation allowance and nesting budget;
+errors retain their enclosing-object byte offsets.
+
+StrokeFillPath,
 effects/serializable objects and terminal-server record families remain unsupported.
 Reserved MultiFormat records (`4005`–`4007`) are explicitly malformed for typed
 decoding, rather than mistaken for an unimplemented valid drawing operation.
-Path point types are exposed; their complete
-figure/Bezier topology is not yet semantically validated. Embedded metafiles are
+Path type flags, starting points, complete Bezier triples, figure closures and
+RLE Bezier indicators are validated before exposing a path, including nested cap
+paths. Dash/marker flags remain available to the renderer. Embedded metafiles are
 not automatically recursed into. The consumer must impose a nesting/aggregate
 resource budget before recursive playback.
 
@@ -151,8 +158,13 @@ are emitted for the consumer to apply. No completed scene or SVG is synthesized.
 - DIB orientation and DWORD row padding are respected; RLE runs/deltas and
   palette indexes are bounded. Missing RLE terminators are rejected.
 - `AlphaImage` handles 32-bit premultiplied BGRA separately from ordinary RGB32.
-- EMF+ bitmap output: PNG/JPEG, 24-bit RGB, 32-bit RGB, ARGB, PARGB. Other raw
-  EMF+ pixel formats, GIF/TIFF and CMYK DIBs are unsupported.
+- EMF+ bitmap output: PNG/JPEG and all 14 defined raw formats: 1/4/8-bit indexed,
+  16-bit grayscale/RGB555/RGB565/ARGB1555, RGB24, RGB32/ARGB32/PARGB32, RGB48,
+  ARGB64/PARGB64. Indexed palettes are separate from pixel storage; palette
+  bounds, flags and indexes are checked. ARGB palette alpha is preserved.
+  Gray16/NRGBA64/RGBA64 output preserves extended channel precision and byte
+  order. Premultiplication and 32-bit native allocation bounds are checked.
+  PixelFormatUndefined, GIF/TIFF and CMYK DIBs remain unsupported.
 - Encoded-image dimensions are read and checked before invoking full decoders.
   Pixel decoding is distinct from destination scaling, clipping, ROP3, blending,
   transparency-color treatment and other drawing operations.

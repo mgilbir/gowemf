@@ -2,6 +2,14 @@ package gowemf
 
 import "encoding/json"
 
+func (r EffectRectangles) MarshalJSON() ([]byte, error) {
+	rects := make([]Rect, r.Len())
+	for i := range rects {
+		rects[i] = r.At(i)
+	}
+	return json.Marshal(rects)
+}
+
 func (v GradientVertices) MarshalJSON() ([]byte, error) {
 	vertices := make([]GradientVertex, v.Len())
 	for i := range vertices {

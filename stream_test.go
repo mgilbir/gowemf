@@ -146,6 +146,9 @@ func TestStreamObjectTableBoundaries(t *testing.T) {
 }
 
 func FuzzStream(f *testing.F) {
+	object, draw := effectImageDrawFixture()
+	effect := effectRecord(blurGUIDWire, append(floats(1), longs(0)...)).Raw
+	f.Add(emfFixture(plusComment(plusHeader(), object, effect, draw, plusRecord(PlusEndOfFileRecord, nil))))
 	f.Add(wmfFixture(false))
 	f.Add(embeddedEMFFixture(emfFixture(), 31))
 	f.Add(wmfDocument(2, wmfPaletteFixture(2), testRecord(WMF, 0x0234, 0, words(0)), testRecord(WMF, 0x001e, 0, nil), wmfPaletteFixture(1), testRecord(WMF, 0x0234, 0, words(1)), testRecord(WMF, 0x0127, 0, words(-1)), testRecord(WMF, 0x0037, 0, append(words(1, 1), []byte{10, 20, 30, 0}...))))

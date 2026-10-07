@@ -250,7 +250,7 @@ func (c *cursor) emfplus(typ uint32, flags uint16) any {
 		v = x
 	case 0x401a, 0x401b:
 		c.plusID(id)
-		x := PlusImageDraw{ImageID: id, AttributesID: c.dword(), Unit: c.dword(), Source: c.plusBox(false), Effect: flags&0x2000 != 0}
+		x := PlusImageDraw{ImageID: id, AttributesID: c.dword(), Unit: c.dword(), Source: c.plusBox(false), Effect: typ == PlusDrawImagePointsRecord && flags&0x2000 != 0}
 		if x.Unit != 2 {
 			c.bad("EMF+ source unit")
 		}
@@ -302,6 +302,8 @@ func (c *cursor) emfplus(typ uint32, flags uint16) any {
 		v = PlusClip{ObjectID: id, Mode: uint32(flags>>8) & 15}
 	case 0x4036:
 		v = c.driverString(flags)
+	case PlusSerializableObjectRecord:
+		v = c.serializableEffect()
 	default:
 		return c.unsupported()
 	}

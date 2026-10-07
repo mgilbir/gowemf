@@ -48,7 +48,8 @@ func (d *DIB) rawAlphaImage() (*image.RGBA, error) {
 	return out, nil
 }
 
-// Image decodes EMF+ PNG/JPEG and all defined raw pixel formats. Extended
+// Image decodes EMF+ PNG/JPEG/GIF and all defined raw pixel formats. GIF returns
+// the first image on its logical canvas; subsequent animation is not decoded. Extended
 // channels retain 16-bit precision in Gray16, NRGBA64 or RGBA64 outputs. Indexed
 // colors retain palette alpha; premultiplied formats return RGBA/RGBA64.
 // All public fields are revalidated, including caller-constructed values.
@@ -70,6 +71,9 @@ func (p PlusImage) Image(limits ImageLimits) (image.Image, error) {
 }
 
 func decodeEncodedImage(data []byte, l ImageLimits) (image.Image, error) {
+	if len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a") {
+		return decodeGIFImage(data, l)
+	}
 	var cfg image.Config
 	var err error
 	isPNG := len(data) >= 8 && bytes.Equal(data[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10})

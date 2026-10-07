@@ -1,5 +1,17 @@
 # Third-party notices
 
+## GIF format reference
+
+GIF support uses Go's standard-library decoder. The GIF89a specification used
+as the format reference requests the following acknowledgment:
+
+The Graphics Interchange Format(c) is the Copyright property of CompuServe
+Incorporated. GIF(sm) is a Service Mark property of CompuServe Incorporated.
+
+Reference: https://www.w3.org/Graphics/GIF/spec-gif89a.txt
+
+## Color-management dependency
+
 gowemf uses `github.com/mgilbir/golittlecms` at revision
 `f6af7cfe1556bc222c4572fcbc3ec0e1773b519d` for ICC color transforms. Its license
 notice is reproduced below. No golittlecms implementation source has been copied

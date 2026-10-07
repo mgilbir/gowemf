@@ -16,7 +16,7 @@ inventory and outstanding format coverage are explicit in [COVERAGE.md](COVERAGE
 | --- | --- | --- |
 | MS-WMF | Standard/placeable framing; core drawing/state/object records; text; DIB and Bitmap16 layouts; enhanced-EMF fragment decoding and explicit checksummed extraction | Other escape subtypes; device-dependent bitmap color realization |
 | MS-EMF | Framing; geometry/transforms/paths; objects; text; regions; palettes; gradients; raster transfers; logical color spaces, ICM/profile and color-adjustment records | Header/font extensions remain partially opaque; driver/OpenGL extensions; playback-level color adjustment/proofing |
-| MS-EMFPLUS | Drawing/property/transform records including curves, driver strings and containers; object continuation; all five brush families; pens/custom caps; validated paths; regions; images in every defined raw pixel format; fonts/string formats/image attributes | Effects/terminal-server records, StrokeFillPath, GIF/TIFF compressed images |
+| MS-EMFPLUS | Drawing/property/transform records; object continuation; brushes, pens/custom caps, validated paths and regions; all raw bitmap formats plus PNG/JPEG/GIF; fonts/string formats/image attributes; serialized image-effect parameters | Terminal-server records, StrokeFillPath, TIFF compressed images, effect pixel algorithms |
 
 Unknown records are exposed as raw views. Acceptance by the framing parser is
 **not** a claim that record bodies are valid or supported for playback. `Decode`
@@ -78,16 +78,26 @@ Named wire identifiers (`MetaStretchDIB`, `EMRPolygon`, `PlusDrawStringRecord`,
 and others in `record_types.go`) avoid hard-coded opcode values. Naming a record
 does not imply support for every encoding or extension it can contain.
 
+Serializable image-effect records decode all eleven standard effect parameter
+blocks. `Stream` requires a prior effect for effect-enabled `DrawImagePoints`
+and binds the latest description through `Command.Effect`. Applying blur, color
+adjustments and other effect algorithms remains the renderer's responsibility.
+
 ### Bitmap decoding
 
 `ParseDIB` handles separate EMF bitmap-info/pixel buffers; `ParsePackedDIB` handles
 WMF packed DIBs. `DIB.Image()` decodes RGB, bitfields, indexed colors, RLE4/RLE8,
 PNG and JPEG. `DIB.AlphaImage()` applies the premultiplied BGRA interpretation
 required by AlphaBlend; ordinary RGB32 is opaque. `PlusImage.Image()` decodes
-PNG/JPEG and all defined raw EMF+ formats, including indexed palettes, grayscale,
+PNG/JPEG/GIF and all defined raw EMF+ formats, including indexed palettes, grayscale,
 RGB555/565/ARGB1555 and 48/64-bit RGB/ARGB/PARGB. High-depth pixels retain 16-bit
 channels in Go's `Gray16`, `NRGBA64`, or `RGBA64` image types. These use only Go's standard
 library. Image dimensions and byte/pixel budgets are checked before allocation.
+GIF decoding returns the first frame positioned on its logical canvas. Opaque
+GIFs use the global background color where specified; transparent first frames
+use a transparent canvas. Later animation frames are neither loaded nor validated.
+Plain-text rendering extensions are explicitly unsupported. Canvas/frame bounds
+and palette spans are checked before the standard-library decoder runs.
 
 ### Color management
 

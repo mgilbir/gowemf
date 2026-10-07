@@ -87,7 +87,7 @@ palette color realization and raster/compositing operations belong to playback.
 
 ## EMF+ typed records and objects
 
-- Records: `4001`–`4004`, `4008`–`4036` (hex).
+- Records: `4001`–`4004`, `4008`–`4036`, `4038` (hex).
   These cover header/EOF/comment/GetDC, object fragments, clear, rectangles,
   polygons/lines/Beziers, ellipses/arcs/pies, path/region drawing, image placement,
   strings/driver strings, cardinal splines, rendering properties, save/restore, containers,
@@ -117,8 +117,15 @@ scales, finite dimensions and mandatory zero hotspots are checked. Nested cap,
 brush, image and path decoders share an allocation allowance and nesting budget;
 errors retain their enclosing-object byte offsets.
 
-StrokeFillPath,
-effects/serializable objects and terminal-server record families remain unsupported.
+`EmfPlusSerializableObject` decodes all eleven standard image-effect blocks:
+blur, brightness/contrast, color balance, color curve, color lookup table,
+color matrix, hue/saturation/lightness, levels, red-eye correction, sharpening
+and tint. GUIDs are matched in full, declared buffer sizes and array spans are
+checked, floats must be finite, and parameters must lie in their defined domains.
+Lookup tables and red-eye rectangles are zero-copy views. Color-matrix wire
+rows and their affine constraints are explicit. Effect algorithms are not executed.
+
+StrokeFillPath and terminal-server record families remain unsupported.
 Reserved MultiFormat records (`4005`–`4007`) are explicitly malformed for typed
 decoding, rather than mistaken for an unimplemented valid drawing operation.
 Path type flags, starting points, complete Bezier triples, figure closures and
@@ -147,6 +154,10 @@ Native EMF+ selection includes GDI commands only in GetDC intervals. An explicit
 GDI fallback is available only for Dual files. Drawing properties, affine
 composition order, clip combination, font metrics and object-style realization
 are emitted for the consumer to apply. No completed scene or SVG is synthesized.
+Effect-enabled `DrawImagePoints` requires an earlier serialized effect and receives
+the latest description in `Command.Effect`. The stream retains only that latest
+description. `DrawImage` ignores the bit reserved at the corresponding position;
+it neither requires nor applies an effect. Pixel filtering remains external.
 
 ## Pixel decoding
 
@@ -158,13 +169,19 @@ are emitted for the consumer to apply. No completed scene or SVG is synthesized.
 - DIB orientation and DWORD row padding are respected; RLE runs/deltas and
   palette indexes are bounded. Missing RLE terminators are rejected.
 - `AlphaImage` handles 32-bit premultiplied BGRA separately from ordinary RGB32.
-- EMF+ bitmap output: PNG/JPEG and all 14 defined raw formats: 1/4/8-bit indexed,
+- EMF+ bitmap output: PNG/JPEG/GIF and all 14 defined raw formats: 1/4/8-bit indexed,
   16-bit grayscale/RGB555/RGB565/ARGB1555, RGB24, RGB32/ARGB32/PARGB32, RGB48,
   ARGB64/PARGB64. Indexed palettes are separate from pixel storage; palette
   bounds, flags and indexes are checked. ARGB palette alpha is preserved.
   Gray16/NRGBA64/RGBA64 output preserves extended channel precision and byte
   order. Premultiplication and 32-bit native allocation bounds are checked.
-  PixelFormatUndefined, GIF/TIFF and CMYK DIBs remain unsupported.
+  PixelFormatUndefined, TIFF and CMYK DIBs remain unsupported.
+- GIF87a/89a return the first frame on its logical canvas with frame offsets,
+  local/global palettes and transparency preserved. Uncovered opaque canvas uses
+  the global background where available; transparent first frames use a clear
+  canvas. Logical/frame bounds and palette spans are checked before decoding.
+  Later animation frames are neither loaded nor validated. Plain-text rendering
+  extensions and unsupported control/rendering extensions are explicit errors.
 - Encoded-image dimensions are read and checked before invoking full decoders.
   Pixel decoding is distinct from destination scaling, clipping, ROP3, blending,
   transparency-color treatment and other drawing operations.

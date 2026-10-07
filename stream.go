@@ -18,7 +18,10 @@ type StreamOptions struct {
 // handle. Complete EMF+ objects replace fragment bodies with their decoded type;
 // incomplete fragments do not produce a command. Source points to the final
 // fragment for a continued object. Bodies/views must be treated as immutable.
+// Effect identifies the most recent serialized effect for DrawImagePoints
+// commands with the E flag. It is nil for other commands, including DrawImage.
 type Command struct {
+	Effect      *PlusEffect
 	Source      Record
 	Body        any
 	ObjectID    uint32
@@ -35,7 +38,8 @@ type Command struct {
 // Like Walk, callbacks can precede a later semantic failure. For transactional
 // consumers, call Stream with a nil visitor first, then stream the immutable
 // input to the renderer. The framing pre-pass makes Header available internally
-// without collecting records. Only object kinds and bounded stacks are retained;
+// without collecting records. Object kinds, bounded stacks and the latest
+// serialized effect description are retained;
 // callers retaining commands are responsible for their own memory budget.
 func Stream(data []byte, options StreamOptions, visit func(Command) error) (Header, error) {
 	h, err := Walk(data, options.Framing, nil)
@@ -112,6 +116,9 @@ func Stream(data []byte, options StreamOptions, visit func(Command) error) (Head
 		} else if err := s.gdi(&cmd); err != nil {
 			return err
 		}
+		if v, ok := cmd.Body.(PlusImageDraw); ok && v.Effect {
+			cmd.Effect = s.effect
+		}
 		if visit != nil {
 			return visit(cmd)
 		}
@@ -137,6 +144,7 @@ func streamError(r Record, err error) error {
 }
 
 type streamState struct {
+	effect           *PlusEffect
 	options          StreamOptions
 	kinds            []uint8
 	paletteCounts    []uint32
@@ -418,6 +426,9 @@ func (s *streamState) plus(r Record, body any) error {
 		}
 		return brush(v.BrushID, v.Solid)
 	case PlusImageDraw:
+		if v.Effect && s.effect == nil {
+			return malformed(r.Offset, "image effect without earlier serialized object")
+		}
 		if err := ref(uint32(v.ImageID), 5); err != nil {
 			return err
 		}
@@ -434,6 +445,8 @@ func (s *streamState) plus(r Record, body any) error {
 		if r.Type == 0x4034 {
 			return ref(uint32(v.ObjectID), 4)
 		}
+	case PlusEffect:
+		s.effect = &v
 	case Value:
 		if r.Type == 0x4025 || r.Type == 0x4028 {
 			if uint64(len(s.plusSaved)) >= uint64(s.options.MaxSavedStates) {

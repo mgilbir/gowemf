@@ -52,6 +52,9 @@ Intentional normalization:
   decode them.
 - POI 5.4.1's DrawLines record exposes only flags, so it is not a coordinate oracle
   for that record.
+- Its SerializableObject record also exposes only flags, not effect parameters.
+  A generated record pins this limitation; no POI agreement is claimed for the
+  eleven decoded effect parameter blocks. Their tests are specification-derived.
 - A generated relative-path object demonstrates that POI treats Integer7 `0x40`
   as +64 rather than the -64 required by MS-EMFPLUS §2.2.2.21, and exposes RLE run
   bytes as point types rather than expanding §2.2.2.32. The test pins this observed
@@ -115,6 +118,9 @@ Custom-cap tests were observed failing before decoder support was added. Planted
 and restored defects also demonstrated that tests reject reset nested-allocation
 budgets and palette bytes incorrectly counted as bitmap pixels. Malformed path
 topology was accepted before its regression and validation fix.
+Image-effect tests also failed before serializable-object support and earlier-effect
+validation were added. Planted lookup-channel swaps and dropped GIF frame offsets
+caused their regression tests to fail, and were restored before verification.
 
 ## Render oracles
 

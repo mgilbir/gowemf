@@ -166,6 +166,7 @@ type Pen struct {
 }
 type Brush struct{ Handle, Style, Color, Hatch uint32 }
 type Font struct {
+	Extended                                                                                    *FontExtension
 	Handle                                                                                      uint32
 	Height, Width, Escapement, Orientation, Weight                                              int32
 	Italic, Underline, StrikeOut, CharSet, OutPrecision, ClipPrecision, Quality, PitchAndFamily byte
@@ -174,6 +175,13 @@ type Font struct {
 	Unicode  bool
 	// Extensions retain PANOSE/design-vector fields without interpreting them.
 	Extensions []byte
+}
+
+type FontExtension struct {
+	FullName, Style, Script []byte // fixed-capacity UTF-16LE fields
+	StyleSize               uint32
+	Panose                  []byte
+	DesignAxes              Integers
 }
 type Text struct {
 	// SmallChars packs the low byte of Unicode code units (EMR_SMALLTEXTOUT),

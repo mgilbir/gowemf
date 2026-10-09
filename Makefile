@@ -1,4 +1,4 @@
-.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download test-external oracle-download test-oracle
+.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download test-external oracle-download test-oracle test-render
 
 check: fmt-check build test vet race test-32
 
@@ -26,6 +26,7 @@ fuzz:
 	go test -run='^$$' -fuzz=FuzzDIB -fuzztime=30s -parallel=2 .
 	go test -run='^$$' -fuzz=FuzzStream -fuzztime=30s -parallel=2 .
 	go test -run='^$$' -fuzz=FuzzColorTransform -fuzztime=30s -parallel=2 .
+	go test -run='^$$' -fuzz=FuzzTIFF -fuzztime=30s -parallel=2 .
 
 bench:
 	go test -run='^$$' -bench=. -benchmem .
@@ -42,3 +43,7 @@ oracle-download:
 test-oracle: corpus-download oracle-download
 	javac -cp '.external/oracle/*' -d .external/oracle tools/POIRecordDump.java
 	GOWEMF_ORACLE=1 go test -run=TestPOIOracle -count=1 -v .
+
+test-render: oracle-download
+	javac -cp '.external/oracle/*' -d .external/oracle tools/POIBitmapRender.java
+	GOWEMF_RENDER=1 go test -run=TestLibreOfficeRenderOracle -count=1 -v .

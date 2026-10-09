@@ -389,6 +389,18 @@ func TestPlusFixedRecordNoPayload(t *testing.T) {
 }
 
 func FuzzDecode(f *testing.F) {
+	f.Add(uint8(EMFPlus), terminalGraphicsFixture().Raw)
+	f.Add(uint8(EMFPlus), testRecord(EMFPlus, PlusSetTSClipRecord, 0x8001, []byte{0x80, 0x80, 0x90, 0x90}).Raw)
+	font := make([]byte, 324)
+	put32(font, 0, 1)
+	f.Add(uint8(EMF), testRecord(EMF, EMRExtCreateFontIndirectW, 0, font).Raw)
+	for kind, payload := range effectFixtures() {
+		f.Add(uint8(EMFPlus), effectRecord(effectGUIDBytes(kind), payload).Raw)
+	}
+	gifData := gifFixture(f, true, true)
+	gifObject := append(longs(0, 1, 0, 0, 0, 0, 1), gifData...)
+	put32(gifObject, 0, 0xdbc01002)
+	f.Add(uint8(0), append([]byte{5}, gifObject...))
 	for _, r := range []Record{testRecord(WMF, 0x0538, 0, words(1, 2, 1, 2, 3, 4)), testRecord(EMF, 35, 0, floats(1, 0, 0, 1, 0, 0)), testRecord(EMFPlus, 0x400d, 0x800, append(longs(2), []byte{1, 2, 3, 4}...))} {
 		f.Add(uint8(r.Format), r.Raw)
 	}

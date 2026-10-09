@@ -15,8 +15,8 @@ inventory and outstanding format coverage are explicit in [COVERAGE.md](COVERAGE
 | Format | Implemented | Still opaque / not implemented |
 | --- | --- | --- |
 | MS-WMF | Standard/placeable framing; core drawing/state/object records; text; DIB and Bitmap16 layouts; enhanced-EMF fragment decoding and explicit checksummed extraction | Other escape subtypes; device-dependent bitmap color realization |
-| MS-EMF | Framing; geometry/transforms/paths; objects; text; regions; palettes; gradients; raster transfers; logical color spaces, ICM/profile and color-adjustment records | Header/font extensions remain partially opaque; driver/OpenGL extensions; playback-level color adjustment/proofing |
-| MS-EMFPLUS | Drawing/property/transform records including curves, driver strings and containers; object continuation; all five brush families; pens/custom caps; validated paths; regions; images in every defined raw pixel format; fonts/string formats/image attributes | Effects/terminal-server records, StrokeFillPath, GIF/TIFF compressed images |
+| MS-EMF | Framing/header extensions; geometry/transforms/paths; objects and extended fonts; text; regions/palettes/gradients/raster transfers; logical color spaces and saved color state | Pixel-format descriptor interpretation; driver/OpenGL extensions; halftone color-adjustment algorithms |
+| MS-EMFPLUS | Drawing/state records including terminal-server layouts; objects; all raw bitmap formats plus PNG/JPEG/GIF/TIFF; fonts/images; effect parameters with lookup/matrix playback | StrokeFillPath; remaining effect algorithms; TIFF extensions outside the documented subset |
 
 Unknown records are exposed as raw views. Acceptance by the framing parser is
 **not** a claim that record bodies are valid or supported for playback. `Decode`
@@ -78,16 +78,31 @@ Named wire identifiers (`MetaStretchDIB`, `EMRPolygon`, `PlusDrawStringRecord`,
 and others in `record_types.go`) avoid hard-coded opcode values. Naming a record
 does not imply support for every encoding or extension it can contain.
 
+Serializable image-effect records decode all eleven standard effect parameter
+blocks. `Stream` requires a prior effect for effect-enabled `DrawImagePoints`
+and binds the latest description through `Command.Effect`. `ApplyImageEffect`
+executes lookup tables and color matrices with bounded straight-RGBA output.
+Other filter algorithms remain explicitly unsupported by that helper.
+
 ### Bitmap decoding
 
 `ParseDIB` handles separate EMF bitmap-info/pixel buffers; `ParsePackedDIB` handles
 WMF packed DIBs. `DIB.Image()` decodes RGB, bitfields, indexed colors, RLE4/RLE8,
 PNG and JPEG. `DIB.AlphaImage()` applies the premultiplied BGRA interpretation
 required by AlphaBlend; ordinary RGB32 is opaque. `PlusImage.Image()` decodes
-PNG/JPEG and all defined raw EMF+ formats, including indexed palettes, grayscale,
+PNG/JPEG/GIF/TIFF and all defined raw EMF+ formats, including indexed palettes, grayscale,
 RGB555/565/ARGB1555 and 48/64-bit RGB/ARGB/PARGB. High-depth pixels retain 16-bit
 channels in Go's `Gray16`, `NRGBA64`, or `RGBA64` image types. These use only Go's standard
 library. Image dimensions and byte/pixel budgets are checked before allocation.
+GIF decoding returns the first frame positioned on its logical canvas. Opaque
+GIFs use the global background color where specified; transparent first frames
+use a transparent canvas. Later animation frames are neither loaded nor validated.
+Plain-text rendering extensions are explicitly unsupported. Canvas/frame bounds
+and palette spans are checked before the standard-library decoder runs.
+`ParseTIFF` supports bounded classic stripped gray/palette/RGB TIFFs, including
+PackBits, TIFF LZW, Deflate, orientation, predictors, separate planes and alpha.
+It processes only the first IFD and requires explicit ICC conversion when tagged.
+See COVERAGE.md for unsupported TIFF layouts; no extra Go dependency is used.
 
 ### Color management
 
@@ -105,7 +120,10 @@ The golittlecms adapter supports RGB ICC profiles, calibrated XYZ endpoints/gamm
 Windows-to-ICC rendering intents, and optional black-point compensation, with
 straight-alpha RGBA output. For a color space selected by EMF records, use
 `ConvertToSRGB` with the selected `ColorSpace`. Applying DC profile selection,
-halftone color adjustments and soft proofing remains the renderer's responsibility.
+halftone color adjustments remains the renderer's responsibility. GDI commands
+include immutable `ColorState` snapshots reflecting save/restore and profile
+selection. `NewPixelColorTransform` supports gray/CMYK buffers, and
+`NewProofingColorTransform` provides explicit target-profile soft proofing.
 
 Named profile paths are never opened automatically. `NewColorTransformWithOptions`
 accepts an explicit resolver callback if the application wants to supply profile
@@ -143,6 +161,8 @@ Zero-valued limits select finite defaults:
 - Command stream: 65,536 object slots and 1,024 saved states.
 - Bitmap decoding: 16 MiB encoded input and 16,000,000 output pixels. Returned
   images and codec temporary storage are additional to the input buffer.
+- TIFF/effect decoded storage: 128 MiB by default; TIFF byte products are checked
+  before multiplication or allocation, including on 32-bit hosts.
 - Color conversion: 16 MiB profile bytes/referenced tag bytes, 4,096 ICC tags,
   and 16,000,000 pixels per transform call. Conversion has a separate output
   image and one staging row; backend profile/transform storage is additional.
@@ -160,11 +180,12 @@ acquisition; `Walk` cannot undo allocation performed before it is called.
 
 ```sh
 make check          # format, build, tests, vet, race, 32-bit tests
-make fuzz           # five 30-second fuzz targets, two workers each
+make fuzz           # six 30-second fuzz targets, two workers each
 make bench          # generated-input microbenchmarks with allocation counts
 make corpus-download
 make test-external  # fetch/verify pinned inputs, then run corpus assertions
 make test-oracle    # download pinned POI jars; requires java and javac
+make test-render    # LibreOffice + POI raster comparisons; requires Liberation Sans and prlimit
 go run ./cmd/gowemfdump -summary file.emf
 go run ./cmd/gowemfdump -offset 128 file.emf
 ```
@@ -212,8 +233,8 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-the typed command stream to spine's renderer; add tolerant pixel comparisons
-against LibreOffice and, when available, Windows GDI/GDI+. Windows remains the
+the typed command stream to spine's renderer; extend the current Linux raster
+comparisons to vector/text playback and, when available, Windows GDI/GDI+. Windows remains the
 primary playback oracle. No pixel-perfect or full-format rendering claim is made
 by parser/corpus success. Fonts and metrics must be controlled for meaningful
 cross-renderer comparisons.

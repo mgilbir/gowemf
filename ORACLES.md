@@ -52,6 +52,9 @@ Intentional normalization:
   decode them.
 - POI 5.4.1's DrawLines record exposes only flags, so it is not a coordinate oracle
   for that record.
+- Its SerializableObject record also exposes only flags, not effect parameters.
+  A generated record pins this limitation; no POI agreement is claimed for the
+  eleven decoded effect parameter blocks. Their tests are specification-derived.
 - A generated relative-path object demonstrates that POI treats Integer7 `0x40`
   as +64 rather than the -64 required by MS-EMFPLUS §2.2.2.21, and exposes RLE run
   bytes as point types rather than expanding §2.2.2.32. The test pins this observed
@@ -115,10 +118,56 @@ Custom-cap tests were observed failing before decoder support was added. Planted
 and restored defects also demonstrated that tests reject reset nested-allocation
 budgets and palette bytes incorrectly counted as bitmap pixels. Malformed path
 topology was accepted before its regression and validation fix.
+Image-effect tests also failed before serializable-object support and earlier-effect
+validation were added. Planted lookup-channel swaps and dropped GIF frame offsets
+caused their regression tests to fail, and were restored before verification.
 
 ## Render oracles
 
-No Windows GDI/GDI+ runner is currently available. No render-equivalence claim has
-been verified against Windows or LibreOffice. When a vector/text playback backend
-is connected, compare with controlled metric-compatible fonts and tolerance-based
-pixel metrics; keep source-code licensing boundaries and fixture isolation intact.
+`make test-render` generates EMF/WMF bitmap transfers and TIFFs in code, then runs
+LibreOffice with an isolated user profile, headless display, a 90-second timeout,
+2 GiB address-space limit and 60 CPU-second limit per process. A generated flat
+OpenDocument wrapper supplies an explicit zero-margin page and image frame; the
+result is not cropped after rendering. Exact 96-dpi EMF device metrics avoid a
+rounded-millimeter scaling error in the fixture. Liberation Sans availability is
+checked and the tool/font versions are recorded in `.external/render/run-*/`.
+
+Comparisons include every pixel, with a 3/255 per-channel threshold and a maximum
+1% mismatch fraction. Changed-row tests prove that the metric rejects meaningful
+defects. These tests compare library-decoded raster output and one-to-one transfer
+geometry, not a full vector/text playback backend. Generated EMF and TIFF samples
+match LibreOffice for uncompressed, PackBits, Deflate and early-change LZW data.
+The LZW render sample crosses code-width changes and resets its dictionary.
+
+LibreOffice **24.2.7.2** imports the generated WMF DIB transfer as a blank graphic.
+An execution-only POI raster adapter matches the library/spec-derived pixels
+exactly. The known blank LibreOffice result is asserted separately, tied to that
+version, and excluded from agreement claims. Unexpected differences on another
+version fail the test instead of increasing tolerance or silently skipping WMF.
+
+Generated inputs, PNGs, wrapper documents and environment information remain
+ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.
+No GPL/MPL implementation source is read or ported. Windows GDI/GDI+ remains
+unavailable and no Windows render-equivalence claim is made.
+
+## Decoder and playback extensions
+
+TIFF parsing follows the TIFF 6.0 structure, strip, PackBits, LZW, predictor and
+alpha descriptions. It intentionally does not traverse later IFDs or private
+pointer trees. Tests cover both byte orders, planes, orientations, palette/channel
+precision, exact decompression sizes and checked arithmetic. A planted late-change
+LZW defect failed the width-transition test. A transposed-matrix defect exposed an
+initially symmetric test fixture; replacing it with a non-symmetric channel cycle
+made that regression fail as intended before restoring the implementation.
+
+Terminal-server clip decoding implements the fixed 4/8-byte rectangle forms in
+the MS-EMFPLUS size tables. Its per-coordinate prose can suggest mixed-width data;
+that interpretation is not guessed without an independently verified input.
+The current specification names StrokeFillPath in its enumeration but supplies
+no record-layout section; it remains explicitly unsupported.
+
+Gray and CMYK profile tests generate their ICC data through public golittlecms
+APIs. The CMYK profile is a small analytical test device, not an external printer
+profile or a claimed colorimetric characterization. Soft-proof tests use an sRGB
+identity target and check alpha preservation. Halftone ColorAdjustment algorithms
+and filters beyond lookup/matrix effects are not approximated as Windows output.

@@ -20,7 +20,8 @@ const (
 // XYZ holds a CIE XYZ tristimulus vector, decoded from signed 2.30 fixed point.
 type XYZ struct{ X, Y, Z float64 }
 
-// ColorSpace describes source RGB colors. Name and Profile borrow the input.
+// ColorSpace describes source/profile colors. Calibration fields are RGB-only;
+// embedded ICC profiles can describe RGB, gray or CMYK. Name and Profile borrow the input.
 // Name is an opaque profile name (UTF-16LE when Unicode is true); the library
 // never opens it. A supplied in-memory profile takes precedence over calibrated
 // endpoints. sRGB/Windows spaces ignore calibration/profile fields per MS-WMF.

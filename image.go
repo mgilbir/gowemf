@@ -48,7 +48,8 @@ func (d *DIB) rawAlphaImage() (*image.RGBA, error) {
 	return out, nil
 }
 
-// Image decodes EMF+ PNG/JPEG and all defined raw pixel formats. Extended
+// Image decodes EMF+ PNG/JPEG/GIF and all defined raw pixel formats. GIF returns
+// the first image on its logical canvas; subsequent animation is not decoded. Extended
 // channels retain 16-bit precision in Gray16, NRGBA64 or RGBA64 outputs. Indexed
 // colors retain palette alpha; premultiplied formats return RGBA/RGBA64.
 // All public fields are revalidated, including caller-constructed values.
@@ -69,7 +70,30 @@ func (p PlusImage) Image(limits ImageLimits) (image.Image, error) {
 	return p.rawBitmapImage(l)
 }
 
+// ImageWithColorTransform adds explicit ICC handling for TIFF payloads. Other
+// encodings retain Image's behavior; no metafile-provided profile paths are opened.
+func (p PlusImage) ImageWithColorTransform(limits ImageLimits, factory ColorTransformFactory) (image.Image, error) {
+	if p.Type == 1 && p.BitmapType == 1 && len(p.Data) >= 4 && (string(p.Data[:2]) == "II" || string(p.Data[:2]) == "MM") {
+		t, err := ParseTIFF(p.Data, limits)
+		if err != nil {
+			return nil, err
+		}
+		return t.ImageWithColorTransform(factory)
+	}
+	return p.Image(limits)
+}
+
 func decodeEncodedImage(data []byte, l ImageLimits) (image.Image, error) {
+	if len(data) >= 4 && (string(data[:2]) == "II" || string(data[:2]) == "MM") {
+		t, err := ParseTIFF(data, l)
+		if err != nil {
+			return nil, err
+		}
+		return t.Image()
+	}
+	if len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a") {
+		return decodeGIFImage(data, l)
+	}
 	var cfg image.Config
 	var err error
 	isPNG := len(data) >= 8 && bytes.Equal(data[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10})

@@ -55,7 +55,7 @@ Record IDs in this table are decimal.
 
 | IDs | Body / coverage |
 | --- | --- |
-| `1`, `14` | Header/EOF control records; common header metadata is in `Header` |
+| `1`, `14` | Header/EOF control records; description, recognized extensions, micrometer size and bounded pixel-format bytes |
 | `2`–`8`, `56`, `85`–`92` | Poly/Bezier/PolyDraw, 32-bit and 16-bit coordinates; polygon sum and Bezier grouping checks |
 | `9`–`13`, `26`, `27`, `54` | Coordinate/mapping/current-position records |
 | `15` | SetPixelV |
@@ -63,7 +63,7 @@ Record IDs in this table are decimal.
 | `28`, `33`, `52`, `59`–`61`, `65`, `66`, `68` | Meta region, SaveDC, palette realization, path-bracket control |
 | `29`, `30`, `42`, `43`, `62`–`64` | Clip rectangles, ellipse/rectangle, path bounds |
 | `31`, `32`, `34`–`36`, `58` | Scaling, RestoreDC, affine transforms, miter limit |
-| `38`, `39`, `82`, `93`–`95` | Pens, brushes, basic Unicode fonts, DIB/mono pattern brushes, extended pens/dash arrays |
+| `38`, `39`, `82`, `93`–`95` | Pens, brushes, Unicode fonts including PANOSE/extended names/design axes, DIB/mono pattern brushes, extended pens/dash arrays |
 | `41`, `44`–`47`, `55` | AngleArc, round rectangle, arc/chord/pie/ArcTo |
 | `49`–`51` | Palette creation, updates, resizing |
 | `70`, `75` | Comment data and ExtSelectClipRgn region rectangles |
@@ -73,7 +73,11 @@ Record IDs in this table are decimal.
 | `118` | Gradient vertex/color views and bounded rectangle/triangle indexes; unused vertex alpha is explicitly identified |
 | `23`, `99`–`101`, `111`–`113`, `121`, `122` | Color adjustment; logical color-space creation/selection/deletion; palette correction; ICM/profile and target-matching metadata |
 
-EMF header extensions and extended font fields remain raw. Text bytes are not
+Header extensions are recognized only before the earliest variable buffer, so a
+long description is not misread as fixed fields. Pixel-format descriptor bytes
+remain uninterpreted. Font PANOSE fields and extended name/style/script/design
+vectors are decoded in their size-selected layouts; unknown short tails remain
+available as raw extension bytes. Text bytes are not
 converted using guessed code pages or mistaken for Unicode when glyph-index mode
 is set. SmallTextOut's packed Unicode low bytes are distinguished from ANSI bytes.
 PolyTextOut strings and advances cannot overlap any descriptor in the text array.
@@ -87,7 +91,7 @@ palette color realization and raster/compositing operations belong to playback.
 
 ## EMF+ typed records and objects
 
-- Records: `4001`–`4004`, `4008`–`4036` (hex).
+- Records: `4001`–`4004`, `4008`–`4036`, `4038`–`403a` (hex).
   These cover header/EOF/comment/GetDC, object fragments, clear, rectangles,
   polygons/lines/Beziers, ellipses/arcs/pies, path/region drawing, image placement,
   strings/driver strings, cardinal splines, rendering properties, save/restore, containers,
@@ -117,8 +121,23 @@ scales, finite dimensions and mandatory zero hotspots are checked. Nested cap,
 brush, image and path decoders share an allocation allowance and nesting budget;
 errors retain their enclosing-object byte offsets.
 
-StrokeFillPath,
-effects/serializable objects and terminal-server record families remain unsupported.
+`EmfPlusSerializableObject` decodes all eleven standard image-effect blocks:
+blur, brightness/contrast, color balance, color curve, color lookup table,
+color matrix, hue/saturation/lightness, levels, red-eye correction, sharpening
+and tint. GUIDs are matched in full, declared buffer sizes and array spans are
+checked, floats must be finite, and parameters must lie in their defined domains.
+Lookup tables and red-eye rectangles are zero-copy views. Color-matrix wire
+rows and their affine constraints are explicit. `ApplyImageEffect` executes lookup
+tables and affine color matrices in straight RGBA8 with checked output budgets,
+clamping and rounding. Other pixel-effect algorithms remain unsupported.
+
+Terminal-server graphics snapshots include validated modes, signed origins,
+transforms and optional palettes. Terminal clip rectangles decode the uniform
+4-byte/8-byte forms described by the Size/DataSize tables, with signed differences
+and bottom-relative-to-current-top handling. Inconsistent per-coordinate markers
+are rejected; mixed-width interpretations are not guessed from ambiguous prose.
+StrokeFillPath remains unsupported: it is named in the RecordType enumeration but
+has no record-layout section in the consulted MS-EMFPLUS revision.
 Reserved MultiFormat records (`4005`–`4007`) are explicitly malformed for typed
 decoding, rather than mistaken for an unimplemented valid drawing operation.
 Path type flags, starting points, complete Bezier triples, figure closures and
@@ -147,6 +166,14 @@ Native EMF+ selection includes GDI commands only in GetDC intervals. An explicit
 GDI fallback is available only for Dual files. Drawing properties, affine
 composition order, clip combination, font metrics and object-style realization
 are emitted for the consumer to apply. No completed scene or SVG is synthesized.
+Effect-enabled `DrawImagePoints` requires an earlier serialized effect and receives
+the latest description in `Command.Effect`. The stream retains only that latest
+description. `DrawImage` ignores the bit reserved at the corresponding position;
+it neither requires nor applies an effect. Supported pixel effects are applied
+explicitly through `ApplyImageEffect`; `Stream` does not mutate image pixels.
+GDI commands carry `ColorState` snapshots for selected source spaces, ICM mode,
+output profiles, proofing metadata and color adjustments. Save/restore and deleted
+color-object lifetimes are handled without mutating previously emitted snapshots.
 
 ## Pixel decoding
 
@@ -158,16 +185,39 @@ are emitted for the consumer to apply. No completed scene or SVG is synthesized.
 - DIB orientation and DWORD row padding are respected; RLE runs/deltas and
   palette indexes are bounded. Missing RLE terminators are rejected.
 - `AlphaImage` handles 32-bit premultiplied BGRA separately from ordinary RGB32.
-- EMF+ bitmap output: PNG/JPEG and all 14 defined raw formats: 1/4/8-bit indexed,
+- EMF+ bitmap output: PNG/JPEG/GIF/TIFF and all 14 defined raw formats: 1/4/8-bit indexed,
   16-bit grayscale/RGB555/RGB565/ARGB1555, RGB24, RGB32/ARGB32/PARGB32, RGB48,
   ARGB64/PARGB64. Indexed palettes are separate from pixel storage; palette
   bounds, flags and indexes are checked. ARGB palette alpha is preserved.
   Gray16/NRGBA64/RGBA64 output preserves extended channel precision and byte
   order. Premultiplication and 32-bit native allocation bounds are checked.
-  PixelFormatUndefined, GIF/TIFF and CMYK DIBs remain unsupported.
+  PixelFormatUndefined and CMYK DIBs remain unsupported.
+- GIF87a/89a return the first frame on its logical canvas with frame offsets,
+  local/global palettes and transparency preserved. Uncovered opaque canvas uses
+  the global background where available; transparent first frames use a clear
+  canvas. Logical/frame bounds and palette spans are checked before decoding.
+  Later animation frames are neither loaded nor validated. Plain-text rendering
+  extensions and unsupported control/rendering extensions are explicit errors.
 - Encoded-image dimensions are read and checked before invoking full decoders.
   Pixel decoding is distinct from destination scaling, clipping, ROP3, blending,
   transparency-color treatment and other drawing operations.
+
+### TIFF profile
+
+`ParseTIFF` reads the first classic II/MM IFD, with a 4096-entry metadata cap and
+16-sample cap. It does not follow later pages, SubIFDs or private pointer tags.
+Supported stripped layouts are unsigned 1/4/8/16-bit gray, palette and RGB, with
+contiguous/separate planes, associated/unassociated alpha, orientations 1–8,
+horizontal prediction, uncompressed/PackBits/LZW/Deflate data and exact expanded
+sizes. LZW uses TIFF early-width changes and fixed dictionaries. Packed runs cannot
+cross rows; decompression cannot exceed the declared/budgeted output. Decoded
+storage defaults to 128 MiB and has explicit native-index checks.
+
+Embedded ICC profiles are exposed and require explicit conversion. TIFF color
+maps retain 16-bit precision. BigTIFF, tiled images, CCITT/JPEG compression, mixed
+sample widths, floating/signed samples, YCbCr/CMYK/Lab TIFF color layouts remain
+unsupported. This is a bounded TIFF subset, not a claim of complete baseline TIFF
+support (which would also require CCITT Modified Huffman).
 
 ## Color conversion
 
@@ -177,17 +227,23 @@ mapping, alpha preservation and black-point compensation. Resolvers are explicit
 callbacks; no metafile-provided paths are opened automatically. ICC tag count,
 byte ranges and aggregate referenced bytes are bounded before backend parsing.
 Source and destination image buffers and backend transform storage have distinct
-budgets. CMYK/gray source-profile adaptation, WCS-specific profile formats,
-halftone ColorAdjustment rendering, and target soft-proofing remain unsupported
-by this adapter even though their relevant EMF record layouts are decoded.
+budgets. `NewPixelColorTransform` additionally converts explicit RGB/RGBA/gray/CMYK
+8-bit buffers to sRGB RGBA8, checking that the profile and channel model agree.
+`NewProofingColorTransform` performs explicit RGB soft proofing through a supplied
+target profile. Generated gray and CMYK profiles exercise the actual backend;
+they are test devices, not printer characterizations. WCS profile formats and
+halftone ColorAdjustment pixel rendering remain unsupported; those adjustments
+are exposed as renderer state rather than approximated.
 
 ## Evidence
 
 Generated tests cover signed coordinates, variable offsets/counts, text padding,
 object reuse, path/save-state errors, stream selection, continuation padding,
 region/gradient bounds, bitmap orientation, masks, palettes, RLE, alpha and image
-budgets. Five fuzz targets cover framing, typed records/objects, DIBs, streams and
-ICC color transform integration. Generated color tests include analytic linear-RGB
+budgets. Six fuzz targets cover framing, typed records/objects, DIBs, streams,
+TIFF and ICC color transform integration. Generated color tests include analytic linear-RGB
 to-sRGB expectations, alpha preservation, and concurrent backend calls.
 The pinned corpus and POI comparisons are described in ORACLES.md. Passing them
-does not establish full specification conformance or render equivalence.
+does not establish full specification conformance or render equivalence. Linux
+render comparisons cover generated raster transfers and TIFFs, not vector/text
+playback; the known LibreOffice WMF discrepancy is recorded separately.

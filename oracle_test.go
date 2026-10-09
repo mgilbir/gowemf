@@ -69,6 +69,27 @@ func TestPOIOracle(t *testing.T) {
 	if os.Getenv("GOWEMF_ORACLE") != "1" {
 		t.Skip("run make test-oracle")
 	}
+	t.Run("known-serialized-effect-oracle-gap", func(t *testing.T) {
+		r := effectRecord(blurGUIDWire, append(floats(3.5), longs(1)...))
+		data := emfFixture(plusComment(plusHeader(), r.Raw, plusRecord(PlusEndOfFileRecord, nil)))
+		path := filepath.Join(t.TempDir(), "effects.emf")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, record := range poiRecords(t, path) {
+			if record.Format == "EMF+" && record.Type == PlusSerializableObjectRecord {
+				found = true
+				if len(record.Body) != 1 || string(record.Body["flags"]) != "0" {
+					t.Fatal("POI serialized-effect support changed; review parameter oracle coverage", record.Body)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("POI omitted serialized effect record")
+		}
+		t.Log("POI 5.4.1 exposes only flags for serialized effects; no parameter agreement is claimed")
+	})
 	t.Run("generated-custom-caps", func(t *testing.T) {
 		cap := arrowCapFixture()
 		pen := penWithCapsFixture(cap, cap)

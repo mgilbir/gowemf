@@ -162,6 +162,8 @@ type Stroke struct {
 	Transform   Matrix
 	Hairline    bool
 	Cap         Cap
+	EndCap      Cap       // when nonzero, Cap is the start cap
+	Compound    []float64 // symmetric band fractions; see gowemf.Stroke
 	Join        Join
 	MiterLimit  float64
 	PixelCenter Point
@@ -527,9 +529,13 @@ func strokeRings(rings []polygon, closed []bool, s Stroke) [][]polygon {
 			}
 		}
 		if !isClosed {
-			for _, end := range [][2]Point{{pts[1], pts[0]}, {pts[len(pts)-2], pts[len(pts)-1]}} {
+			for k, end := range [][2]Point{{pts[1], pts[0]}, {pts[len(pts)-2], pts[len(pts)-1]}} {
 				from, at := end[0], end[1]
-				switch s.Cap {
+				capStyle := s.Cap
+				if k == 1 && s.EndCap != 0 {
+					capStyle = s.EndCap
+				}
+				switch capStyle {
 				case CapRound:
 					add(circle(at, half))
 				case CapSquare:
@@ -700,20 +706,49 @@ func (c *Canvas) Stroke(path Path, s Stroke, paint Paint, clip []*ClipNode) erro
 		toPen = center.Then(inv)
 	}
 	rings, closed := flattenPath(path, 0.05)
+	penRings := transformRings(rings, toPen)
 	// The outline is the union of segment, join and cap pieces: oriented
 	// alike, they cover it exactly under the nonzero rule.
-	var all []polygon
-	for _, piece := range strokeRings(transformRings(rings, toPen), closed, s) {
-		for _, r := range transformRings(piece, fromPen) {
-			if area(r) < 0 {
-				for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
-					r[i], r[j] = r[j], r[i]
+	outline := func(s Stroke) spanSet {
+		var all []polygon
+		for _, piece := range strokeRings(penRings, closed, s) {
+			for _, r := range transformRings(piece, fromPen) {
+				if area(r) < 0 {
+					for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+						r[i], r[j] = r[j], r[i]
+					}
 				}
+				all = append(all, r)
 			}
-			all = append(all, r)
 		}
+		return scan(all, NonZero, w, h)
 	}
-	return c.paint(c.clipped(scan(all, NonZero, w, h), clip), paint)
+	if len(s.Compound) == 0 {
+		return c.paint(c.clipped(outline(s), clip), paint)
+	}
+	if len(s.Compound)%2 != 0 || s.Hairline {
+		return errors.New("invalid compound stroke")
+	}
+	width := s.Width
+	sized := func(f float64) spanSet {
+		t := s
+		t.Width = width * f
+		return outline(t)
+	}
+	var bands spanSet = make(spanSet, h*subScanlines)
+	union := func(a, b bool) bool { return a || b }
+	for i := 0; i < len(s.Compound); i += 2 {
+		a, b := s.Compound[i], s.Compound[i+1]
+		switch {
+		case b <= .5:
+			band := combine(sized(1-2*a), sized(1-2*b), func(x, y bool) bool { return x && !y })
+			bands = combine(bands, band, union)
+		case a < .5:
+			bands = combine(bands, sized(1-2*a), union)
+		}
+		// Bands past the center mirror those before it.
+	}
+	return c.paint(c.clipped(bands, clip), paint)
 }
 
 // Image composites src pixels of img placed by m (image pixels to canvas),
@@ -819,7 +854,7 @@ type Triangle struct {
 // shared edges have no seams; each pixel takes the barycentric color of the
 // triangle containing its center, or of the nearest triangle at the mesh edge.
 // 16-bit channels map to 8 bits by their high byte, as GDI's true-color
-// gradient fills do.
+// gradient fills do. The mesh shares the alpha of its first vertex.
 func (c *Canvas) FillGouraud(mesh []Triangle, clip []*ClipNode) error {
 	w, h := c.size()
 	rings := make([]polygon, len(mesh))
@@ -872,7 +907,7 @@ func (c *Canvas) FillGouraud(mesh []Triangle, clip []*ClipNode) error {
 				}
 				return uint8(min(255, math.Round((wa*v[0]+wb*v[1]+wc*v[2])/s/256)))
 			}
-			blend(c.Image, y*c.Image.Stride+x*4, color.NRGBA{ch(0), ch(1), ch(2), 255}, a)
+			blend(c.Image, y*c.Image.Stride+x*4, color.NRGBA{ch(0), ch(1), ch(2), uint8(t.C[0].A >> 8)}, a)
 		}
 	}
 	return nil

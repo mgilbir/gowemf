@@ -398,14 +398,61 @@ func TestPlayEMFPlusPens(t *testing.T) {
 	if !s.Hairline {
 		t.Fatal("zero width must be a hairline")
 	}
-	// Caps (round), join (bevel), miter limit, dash style and offset.
-	s, _ = stroke(t, plusPen(2|4|8|16|32|128, 0, 2, cat(dwords(2, 2, 1), fl(4), dwords(3), fl(1.5)), red))
-	if s.Cap != CapRound || s.Join != JoinBevel || s.MiterLimit != 4 || s.Dash != DashUser || !pointsNear([]Point{{s.Dashes[0], s.Dashes[1]}, {s.Dashes[2], s.Dashes[3]}}, Point{6, 2}, Point{2, 2}) || s.DashOffset != 3 {
+	// Caps (round), join (bevel), miter limit; dash style and offset.
+	s, _ = stroke(t, plusPen(2|4|8|16, 0, 2, cat(dwords(2, 2, 1), fl(4)), red))
+	if s.Cap != CapRound || s.EndCap != 0 || s.Join != JoinBevel || s.MiterLimit != 4 || s.Dash != DashSolid {
 		t.Fatalf("styled pen %+v", s)
+	}
+	s, _ = stroke(t, plusPen(32|128, 0, 2, cat(dwords(3), fl(1.5)), red))
+	if s.Dash != DashUser || !pointsNear([]Point{{s.Dashes[0], s.Dashes[1]}, {s.Dashes[2], s.Dashes[3]}}, Point{6, 2}, Point{2, 2}) || s.DashOffset != 3 {
+		t.Fatalf("dashed pen %+v", s)
+	}
+	// Different start and end caps; NoAnchor ends flat and SquareAnchor is
+	// a line-width square centered on the end, like Square.
+	s, _ = stroke(t, plusPen(2|4, 0, 2, dwords(2, 0x11), red))
+	if s.Cap != CapRound || s.EndCap != CapSquare {
+		t.Fatalf("mixed caps %+v", s)
+	}
+	s, _ = stroke(t, plusPen(2|4, 0, 2, dwords(0x10, 0x10), red))
+	if s.Cap != CapFlat || s.EndCap != 0 {
+		t.Fatalf("no-anchor caps %+v", s)
+	}
+	// Symmetric compound pens with miter joins.
+	s, _ = stroke(t, plusPen(1024, 0, 2, cat(dwords(4), fl(0, .25, .75, 1)), red))
+	if len(s.Compound) != 4 || s.Compound[1] != .25 {
+		t.Fatalf("compound %+v", s.Compound)
 	}
 	s, _ = stroke(t, plusPen(32|256, 0, 2, cat(dwords(5), dwords(2), fl(1, 3)), red))
 	if len(s.Dashes) != 2 || s.Dashes[0] != 2 || s.Dashes[1] != 6 {
 		t.Fatalf("custom dashes %+v", s.Dashes)
+	}
+	// Compound bands are exact only for flat caps on open figures and
+	// corners within the miter limit (here 1.4 for a right angle, 10 for the
+	// default limit).
+	compound := plusObj(4, 2, plusPen(2|4|1024, 0, 2, cat(dwords(2, 2), dwords(2), fl(0, 1)), red))
+	sharp := plusObj(5, 2, plusPen(1024, 0, 2, cat(dwords(2), fl(0, 1)), red))
+	lines := func(id uint16, pts ...float64) []byte {
+		return plusRec(PlusDrawLinesRecord, id, dwords(uint32(len(pts)/2)), fl(pts...))
+	}
+	for _, c := range []struct {
+		records [][]byte
+		reason  string
+	}{
+		{[][]byte{compound, lines(4, 0, 0, 10, 0)}, "non-flat caps on an open figure"},
+		{[][]byte{sharp, lines(5, 0, 0, 10, 0, 0, 1)}, "miter limit"},
+		{[][]byte{sharp, lines(5|0x2000, 0, 0, 10, 0, 0, 1)}, "miter limit"},
+		// Only the corner where the figure closes is sharp.
+		{[][]byte{sharp, lines(5|0x2000, 0, 0, 20, 1, 20, 2)}, "miter limit"},
+		{[][]byte{sharp, lines(5, 0, 0, 10, 0, 10, 10), compound, lines(4|0x2000, 0, 0, 10, 0, 10, 10)}, ""},
+	} {
+		b, skipped := plusPlay(t, plusScene(96, 64, c.records...), PlayOptions{})
+		if c.reason == "" {
+			if len(skipped) != 0 || len(b.strokes) != 2 {
+				t.Errorf("compound corners within the limit: %v", skipped)
+			}
+		} else if len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
+			t.Errorf("%s: %v", c.reason, skipped)
+		}
 	}
 	// A pen brush may be a hatch, which the rendering origin anchors.
 	s, _ = stroke(t, plusPen(0, 0, 1, nil, hatchBrush(4, 0xff000000, 0x80ffffff)), plusRec(PlusSetRenderingOriginRecord, 0, longs(3, 4)))
@@ -416,9 +463,15 @@ func TestPlayEMFPlusPens(t *testing.T) {
 		pen    []byte
 		reason string
 	}{
-		{plusPen(1024, 0, 2, cat(dwords(2), fl(0, 1)), red), "compound pen"},
-		{plusPen(2, 0, 2, dwords(2), red), "mixed line caps"},
+		{plusPen(1024, 0, 2, cat(dwords(4), fl(0, .2, .5, 1)), red), "asymmetric compound"},
+		{plusPen(8|1024, 0, 2, cat(dwords(2), dwords(2), fl(0, 1)), red), "compound pen with bevel or round"},
+		{plusPen(32|1024, 0, 2, cat(dwords(1), dwords(2), fl(0, 1)), red), "dashed compound"},
+		{plusPen(1024, 0, 0, cat(dwords(2), fl(0, 1)), red), "zero-width compound"},
 		{plusPen(2|4, 0, 2, dwords(3, 3), red), "triangle"},
+		{plusPen(2|4, 0, 2, dwords(0, 0x14), red), "arrow line cap"},
+		{plusPen(2|4, 0, 2, dwords(0x12, 0), red), "round, diamond"},
+		{plusPen(2|4, 0, 2, dwords(0xff, 0), red), "custom line cap"},
+		{plusPen(2|32, 0, 2, dwords(2, 1), red), "dashed pen with non-flat line caps"},
 		{plusPen(8, 0, 2, dwords(3), red), "clipped miter"},
 		{plusPen(512, 0, 2, dwords(1), red), "alignment"},
 		{plusPen(32|64, 0, 2, dwords(1, 2), red), "dash caps"},
@@ -824,4 +877,133 @@ func emfSplitPlus(blob []byte) [][]byte {
 		blob = blob[n:]
 	}
 	return out
+}
+
+// pathGradientBrush writes EmfPlusPathGradientBrushData with a path boundary
+// (BrushDataPath) or, when boundary holds no path, boundary points.
+func pathGradientBrush(flags, wrap, center uint32, cx, cy float64, surround []uint32, path []byte, points []float64, optional ...[]byte) []byte {
+	b := cat(dwords(plusVersion, 3, flags, wrap, center), fl(cx, cy), dwords(uint32(len(surround))), dwords(surround...))
+	if flags&1 != 0 {
+		b = cat(b, dwords(uint32(len(path))), path)
+	} else {
+		b = cat(b, dwords(uint32(len(points)/2)), fl(points...))
+	}
+	return cat(b, cat(optional...))
+}
+
+type meshRecorder struct {
+	recordingBackend
+	meshes [][]GradientTriangle
+	clips  []Clip
+}
+
+func (b *meshRecorder) FillGradient(mesh []GradientTriangle, clip Clip) error {
+	b.note(checkClip(clip))
+	b.meshes = append(b.meshes, mesh)
+	b.clips = append(b.clips, clip)
+	return nil
+}
+
+func TestPlayEMFPlusPathGradient(t *testing.T) {
+	half := plusRec(PlusSetPixelOffsetModeRecord, 4)
+	square := plusPathObj([]float64{0, 0, 40, 0, 40, 40, 0, 40}, []byte{0, 1, 1, 0x81})
+	fill := plusRec(PlusFillRectsRecord, 0, dwords(1, 1), fl(0, 0, 60, 40))
+	play := func(t *testing.T, brush []byte, records ...[]byte) (*meshRecorder, []string) {
+		t.Helper()
+		var skipped []string
+		b := &meshRecorder{}
+		o := PlayOptions{Destination: Box{Width: 96, Height: 64}, Unsupported: func(u UnsupportedOperation) error {
+			skipped = append(skipped, u.Reason)
+			return nil
+		}}
+		all := append([][]byte{half, plusObj(1, 1, brush)}, records...)
+		if _, err := Play(plusScene(96, 64, append(all, fill)...), o, b); err != nil {
+			t.Fatal(err)
+		}
+		if b.bad != nil {
+			t.Fatal(b.bad)
+		}
+		return b, skipped
+	}
+	red, blue := uint32(0xffff0000), uint32(0xff0000ff)
+	b, skipped := play(t, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil))
+	if len(skipped) != 0 || len(b.meshes) != 1 || len(b.meshes[0]) != 4 {
+		t.Fatal(skipped, b.meshes)
+	}
+	tri := b.meshes[0][0]
+	if tri.Points != [3]Point{{20, 20}, {0, 0}, {40, 0}} || tri.Colors[0] != (color.NRGBA64{0xffff, 0, 0, 0xffff}) || tri.Colors[1] != (color.NRGBA64{0, 0, 0xffff, 0xffff}) {
+		t.Fatalf("fan triangle %+v", tri)
+	}
+	// The filled shape becomes the last clip layer.
+	if c := b.clips[0]; len(c) != 1 || c[0].Op != ClipReplace || !pointsNear(c[0].Area.Points[2:3], Point{60, 40}) {
+		t.Fatal("fill clip", c)
+	}
+	// Per-vertex colors, and the brush transform before the world.
+	b, _ = play(t, pathGradientBrush(1|2, 4, red, 20, 20, []uint32{blue, blue, red, red}, square, nil, fl(1, 0, 0, 1, 10, 0)), plusRec(PlusSetWorldTransformRecord, 0, fl(1, 0, 0, 1, 0, 5)))
+	if tri := b.meshes[0][1]; tri.Points != [3]Point{{30, 25}, {50, 5}, {50, 45}} || tri.Colors[1] != (color.NRGBA64{0, 0, 0xffff, 0xffff}) || tri.Colors[2] != (color.NRGBA64{0xffff, 0, 0, 0xffff}) {
+		t.Fatalf("vertex colors %+v", tri)
+	}
+	// Rendered: red at the center, mostly blue near the boundary, nothing
+	// outside the boundary within the filled rectangle.
+	rb := newRasterBackend(96, 64)
+	data := plusScene(96, 64, half, plusObj(1, 1, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil)), fill)
+	if _, err := Play(data, PlayOptions{Destination: Box{Width: 96, Height: 64}}, rb); err != nil {
+		t.Fatal(err)
+	}
+	if c := rb.canvas.NRGBAAt(19, 19); c.R < 240 || c.B > 15 {
+		t.Error("center", c)
+	}
+	// Pixel (1,20) is 18.5 of 20 units from the center toward the edge.
+	if c := rb.canvas.NRGBAAt(1, 19); math.Abs(float64(c.B)-0.925*255) > 3 || math.Abs(float64(c.R)-0.075*255) > 3 {
+		t.Error("near boundary", c)
+	}
+	if c := rb.canvas.NRGBAAt(50, 20); c != (color.NRGBA{255, 255, 255, 255}) {
+		t.Error("outside the boundary", c)
+	}
+	twoFigures := plusPathObj([]float64{0, 0, 40, 0, 40, 40, 50, 50, 60, 50, 60, 60}, []byte{0, 1, 0x81, 0, 1, 0x81})
+	for _, c := range []struct {
+		brush  []byte
+		reason string
+	}{
+		{pathGradientBrush(0, 4, red, 20, 20, []uint32{blue}, nil, []float64{0, 0, 40, 0, 40, 40}), "point (cardinal spline) boundary"},
+		{pathGradientBrush(1|8, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, 1, 0, 1)), "blend factors"},
+		{pathGradientBrush(1|4, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, 1), dwords(red, blue)), "preset colors"},
+		{pathGradientBrush(1|0x40, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(.5, .5)), "focus scales"},
+		{pathGradientBrush(1|0x80, 4, red, 20, 20, []uint32{blue}, square, nil), "gamma"},
+		{pathGradientBrush(1, 0, red, 20, 20, []uint32{blue}, square, nil), "tiled"},
+		{pathGradientBrush(1, 4, red, 50, 20, []uint32{blue}, square, nil), "star-shaped"},
+		{pathGradientBrush(1, 4, red, 40, 20, []uint32{blue}, square, nil), "star-shaped"},
+		{pathGradientBrush(1, 4, red, 20, 20, []uint32{0x800000ff}, square, nil), "varying alpha"},
+		{pathGradientBrush(1, 4, red, 20, 20, []uint32{blue, red}, square, nil), "surrounding colors"},
+		{pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, twoFigures, nil), "several figures"},
+		// Winding once around the center, but notched so that the edge
+		// from (25,25) to (35,25) faces away from it.
+		{pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, plusPathObj([]float64{0, 0, 25, 0, 25, 25, 35, 25, 35, 0, 40, 0, 40, 40, 0, 40}, []byte{0, 1, 1, 1, 1, 1, 1, 0x81}), nil), "star-shaped"},
+		// Consistent edge orientation, but winding twice around the center.
+		{pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, plusPathObj([]float64{0, 0, 40, 0, 40, 40, 0, 40, 0, 0, 40, 0, 40, 40, 0, 40}, []byte{0, 1, 1, 1, 1, 1, 1, 0x81}), nil), "star-shaped"},
+	} {
+		if _, skipped := play(t, c.brush); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
+			t.Errorf("%s: %v", c.reason, skipped)
+		}
+	}
+	// Mesh triangles share the playback budget.
+	data = plusScene(96, 64, half, plusObj(1, 1, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil)), fill)
+	if _, err := Play(data, PlayOptions{Destination: Box{Width: 96, Height: 64}, MaxImagePixels: 3}, &meshRecorder{}); !errors.Is(err, ErrLimit) {
+		t.Fatal("mesh budget:", err)
+	}
+	// Curved boundaries are flattened; one surrounding color applies.
+	circle := plusPathObj([]float64{40, 20, 40, 31, 31, 40, 20, 40, 9, 40, 0, 31, 0, 20, 0, 9, 9, 0, 20, 0, 31, 0, 40, 9, 40, 20}, []byte{0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0x83})
+	b, skipped = play(t, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, circle, nil))
+	if len(skipped) != 0 || len(b.meshes[0]) < 16 {
+		t.Fatal("curved boundary", skipped, len(b.meshes))
+	}
+	// Without a GradientBackend, and for pens, path gradients are reported.
+	_, skipped = plusPlay(t, plusScene(96, 64, plusObj(1, 1, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil)), fill), PlayOptions{})
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "GradientBackend") {
+		t.Fatal(skipped)
+	}
+	_, skipped = plusPlay(t, plusScene(96, 64, plusObj(2, 2, plusPen(0, 0, 1, nil, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil))), plusRec(PlusDrawLinesRecord, 2, dwords(2), fl(0, 0, 9, 9))), PlayOptions{})
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "path gradient") {
+		t.Fatal(skipped)
+	}
 }

@@ -29,6 +29,16 @@ func plusScenes() []renderScene {
 		{name: "plus-pens.emf", data: scenePlusPens(), probes: []probe{{8, 18, cBlack}, {23, 18, cWhite}, {82, 10, cGreen}, {86, 10, cWhite}, {84, 54, cBlue}, {84, 26, cWhite}, {24, 56, cRed}, {24, 48, cWhite}}},
 		{name: "plus-clip-path.emf", data: scenePlusClipPath(), probes: []probe{{6, 10, cOrange}, {40, 50, cWhite}, {75, 50, cOrange}, {75, 20, cWhite}, {64, 8, cGreen}, {80, 24, cWhite}, {93, 40, cGreen}}},
 		{name: "plus-order.emf", data: scenePlusOrder(), probes: []probe{{28, 14, cRed}, {14, 14, cWhite}, {52, 8, cBlue}, {24, 41, cBlack}, {24, 48, cWhite}, {75, 45, cGreen}, {75, 27, cGreen}, {75, 23, cWhite}}},
+		{name: "plus-caps.emf", data: scenePlusCaps(false), probes: []probe{{73, 12, cBlack}, {18, 12, cWhite}, {17, 32, cBlack}, {72, 32, cWhite}}},
+		{name: "lo-plus-square-anchor.emf", divergence: "LineCapTypeSquareAnchor is drawn wider than the line; MS-EMFPLUS 2.1.1.17 gives it the line width",
+			data:   scenePlusCaps(true),
+			probes: []probe{{73, 52, cBlack}, {18, 52, cWhite}, {70, 46, cWhite}}, libreOffice: []probe{{70, 46, cBlack}}},
+		{name: "lo-plus-compound.emf", divergence: "compound pens are drawn as one solid line of the full width",
+			data:   scenePlusCompound(),
+			probes: []probe{{48, 12, cBlack}, {48, 16, cWhite}, {48, 21, cBlack}, {48, 8, cWhite}, {48, 24, cWhite}, {48, 32, cBlack}, {48, 34, cWhite}, {48, 37, cBlack}, {48, 46, cWhite}}, libreOffice: []probe{{48, 16, cBlack}, {48, 34, cBlack}}},
+		{name: "lo-plus-path-gradient.emf", divergence: "path gradients are drawn as an elliptical blend that also covers the filled area outside the boundary",
+			data:   scenePlusPathGradient(),
+			probes: []probe{{32, 32, cRed}, {10, 32, color.NRGBA{21, 0, 234, 255}}, {70, 32, cWhite}, {32, 5, cWhite}}, libreOffice: []probe{{10, 32, color.NRGBA{153, 0, 102, 255}}, {70, 32, color.NRGBA{77, 0, 179, 255}}}},
 		{name: "plus-image.emf", data: scenePlusImage(false), probes: []probe{{16, 16, cRed}, {32, 16, cLime}, {16, 32, cBlue}, {32, 32, cYellow}, {4, 4, cWhite}, {62, 16, cRed}, {74, 32, cYellow}, {90, 40, cWhite}}},
 		{name: "lo-plus-nearest.emf", divergence: "InterpolationModeNearestNeighbor is ignored; scaled images are smoothed",
 			data:   scenePlusNearest(),
@@ -230,5 +240,43 @@ func scenePlusNearest() []byte {
 		plusObj(1, 5, pngQuadrants(2, cLime)),
 		plusRec(PlusSetInterpolationModeRecord, 5),
 		plusRec(PlusDrawImageRecord, 1, dwords(0xffffffff, 2), fl(0, 0, 2, 2), fl(8, 8, 32, 32)),
+	)
+}
+
+// Width-8 lines with flat/square and round/flat caps at their start and
+// end, or one with NoAnchor/SquareAnchor caps.
+func scenePlusCaps(anchor bool) []byte {
+	black := solidBrush(0xff000000)
+	line := func(id uint16, y float64) []byte {
+		return plusRec(PlusDrawLinesRecord, id, dwords(2), fl(20, y, 70, y))
+	}
+	if anchor {
+		return plusScene96(plusObj(3, 2, plusPen(2|4, 0, 8, dwords(0x10, 0x11), black)), line(3, 52))
+	}
+	return plusScene96(
+		plusObj(1, 2, plusPen(2|4, 0, 8, dwords(0, 1), black)), line(1, 12),
+		plusObj(2, 2, plusPen(2|4, 0, 8, dwords(2, 0), black)), line(2, 32),
+	)
+}
+
+// Compound pens: two outer quarter bands of a 12-wide line, and an 8-wide
+// rectangle outline split by a central gap of a quarter of its width.
+func scenePlusCompound() []byte {
+	black := solidBrush(0xff000000)
+	return plusScene96(
+		plusObj(1, 2, plusPen(1024, 0, 12, cat(dwords(4), fl(0, .25, .75, 1)), black)),
+		plusRec(PlusDrawLinesRecord, 1, dwords(2), fl(10, 16, 86, 16)),
+		plusObj(2, 2, plusPen(1024, 0, 8, cat(dwords(4), fl(0, .375, .625, 1)), black)),
+		plusRec(PlusDrawRectsRecord, 2, dwords(1), fl(20, 34, 56, 24)),
+	)
+}
+
+// A path gradient from a red center to a blue square boundary, filling a
+// wider rectangle: nothing is painted outside the boundary.
+func scenePlusPathGradient() []byte {
+	square := plusPathObj([]float64{8, 8, 56, 8, 56, 56, 8, 56}, []byte{0, 1, 1, 0x81})
+	return plusScene96(
+		plusObj(1, 1, pathGradientBrush(1, 4, 0xffff0000, 32, 32, []uint32{0xff0000ff}, square, nil)),
+		plusRec(PlusFillRectsRecord, 0, dwords(1, 1), fl(8, 8, 80, 48)),
 	)
 }

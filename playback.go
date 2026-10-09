@@ -140,12 +140,24 @@ const (
 // translates stroke geometry by it. Fill geometry needs no such offset. EMF+
 // strokes have a zero PixelCenter: their geometry already follows the EMF+
 // pixel offset mode.
+//
+// Cap applies to both ends of open figures unless EndCap is set, in which
+// case Cap is the start cap and EndCap the end cap (EMF+ pens only). A
+// non-empty Compound divides the pen across its width into parallel bands
+// (MS-EMFPLUS 2.2.2.9): pairs of fractions [a,b] of the width. Play passes
+// only arrays symmetric about the center, with miter joins, so each band is
+// exact as a difference of ordinary strokes: a band with b <= 1/2 covers the
+// stroke of width (1-2a)*Width minus the stroke of width (1-2b)*Width, and a
+// band containing the center covers the stroke of width (1-2a)*Width; open
+// figures then have flat caps and no dashes.
 type Stroke struct {
 	Paint       Paint
 	Hairline    bool
 	Width       float64
 	Transform   Matrix
 	Cap         LineCap
+	EndCap      LineCap
+	Compound    []float64
 	Join        LineJoin
 	MiterLimit  float64
 	Dash        DashStyle

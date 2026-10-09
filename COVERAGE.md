@@ -285,8 +285,8 @@ played by the GDI player, with its own device context.
 | --- | --- | --- |
 | State | Save/Restore, BeginContainer (World or Pixel units) and BeginContainerNoParams, EndContainer; Set/Reset/Multiply/Translate/Scale/RotateWorldTransform in prepend and append order; SetPageTransform in Pixel, Point, Inch, Document and Millimeter units; pixel offset, interpolation and compositing modes; rendering origin. Anti-aliasing, text hints and compositing quality are backend policy. | Display and World page units; containers in physical units (their contents are skipped as a unit); SetTSGraphics and SetTSClip |
 | Clipping | SetClipRect, SetClipPath, SetClipRegion with all six combine modes; region trees with every node type; ResetClip, OffsetClip; container clips as metaregions | — |
-| Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps) | Hatch styles 6–52, path gradients, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha |
-| Pens | World and Pixel widths, pen transform, flat/square/round caps, miter/bevel/round joins, miter limit, predefined and custom dashes with offset, any supported brush | Compound pens, custom, anchor, triangle and mixed caps, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
+| Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, brush transform, clamped) | Hatch styles 6–52, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors, preset colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
+| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps, triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
 | Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
 | Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
@@ -317,6 +317,31 @@ Interpretations where MS-EMFPLUS leaves room:
 - World-unit pen widths follow the pen and world transforms. Pixel-unit widths
   are device pixels. A zero width is a hairline. Unset miter limits are 10,
   GDI+'s default.
+- Line caps follow MS-EMFPLUS 2.1.1.17 where it gives the geometry: Flat,
+  Square, Round, NoAnchor (ends at the last point, like Flat) and
+  SquareAnchor (a square of the line width centered on the end, like Square).
+  The triangle's height and the other anchors' sizes are not given. Neither
+  MS-EMFPLUS nor Microsoft's GDI+ reference gives the coordinate system of
+  custom cap paths or where an adjustable arrow's vertex sits, so those caps
+  are reported. A dashed pen's line caps apply at figure ends and its dash
+  cap at dash ends, which Stroke cannot express apart; dashed pens therefore
+  need flat line caps.
+- Compound lines (MS-EMFPLUS 2.2.2.9) are parallel bands across the pen
+  width. Which side fraction 0 lies on is not specified, so only symmetric
+  arrays are drawn, and how bands meet at bevel and round joins is not either.
+  With miter joins, each band is exactly the full-width mitered stroke at its
+  outer edge minus the one at its inner edge, provided no corner exceeds the
+  miter limit (where GDI+ would bevel); Play checks every corner, and requires
+  flat caps on open figures.
+- A path gradient (MS-EMFPLUS 2.2.2.29) changes color along each line from
+  the center to the boundary. For a boundary that is star-shaped from the
+  center this is exactly a fan of Gouraud triangles from the center, which Play
+  delivers to a `GradientBackend` with the filled shape as a final clip layer;
+  WrapModeClamp leaves the area outside the boundary unpainted. Surrounding
+  colors belong to the boundary vertices, or one color to all. Point
+  boundaries are closed cardinal splines of unstated tension; blend positions
+  are described only as running from a "midpoint" to an "endpoint"; focus
+  scales give no scaling origin. Those are reported.
 - SourceCopy compositing replaces pixels. That equals source-over for opaque
   paint, which is drawn; translucent paint is reported. Clear requires an
   opaque color for the same reason.

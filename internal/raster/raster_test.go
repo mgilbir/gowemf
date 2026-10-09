@@ -189,3 +189,31 @@ func TestClipCombinationIsExact(t *testing.T) {
 		t.Errorf("half-covered edge of A = %d, want half gray", got)
 	}
 }
+
+func TestCompoundAndMixedCaps(t *testing.T) {
+	line := Path{Verbs: []Verb{MoveTo, LineTo}, Points: []Point{{4, 10}, {30, 10}}}
+	black := Paint{Color: color.NRGBA{A: 255}}
+	inked := func(c *Canvas, x, y int) bool { return c.Image.NRGBAAt(x, y).R < 128 }
+	// Width 10: bands [0,.2] and [.8,1] lie 3 to 5 units from the center,
+	// and [.4,.6] covers the center unit on each side.
+	c := New(40, 20)
+	if err := c.Stroke(line, Stroke{Width: 10, Transform: Identity(), Cap: CapFlat, Join: JoinMiter, MiterLimit: 10, Compound: []float64{0, .2, .4, .6, .8, 1}}, black, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct {
+		y    int
+		want bool
+	}{{4, false}, {5, true}, {6, true}, {7, false}, {8, false}, {9, true}, {10, true}, {11, false}, {12, false}, {13, true}, {14, true}, {15, false}} {
+		if got := inked(c, 15, p.y); got != p.want {
+			t.Errorf("compound row %d inked %v, want %v", p.y, got, p.want)
+		}
+	}
+	// A square start cap extends 5 units back; a flat end cap stops.
+	c = New(40, 20)
+	if err := c.Stroke(line, Stroke{Width: 10, Transform: Identity(), Cap: CapSquare, EndCap: CapFlat, Join: JoinMiter, MiterLimit: 10}, black, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !inked(c, 0, 10) || inked(c, 31, 10) {
+		t.Error("mixed caps", inked(c, 0, 10), inked(c, 31, 10))
+	}
+}

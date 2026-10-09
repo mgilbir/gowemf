@@ -354,9 +354,11 @@ func clamp32(v int64) int32 {
 }
 
 // GradientTriangle is one triangle of a Gouraud-shaded mesh in destination
-// coordinates. Colors are interpolated linearly in destination space; they
-// carry MS-EMF TriVertex's 16-bit channels and are opaque, because GradientFill
-// ignores the vertex alpha (MS-EMF 2.2.26).
+// coordinates. Colors are interpolated linearly in destination space. EMF
+// meshes carry MS-EMF TriVertex's 16-bit channels and are opaque, because
+// GradientFill ignores the vertex alpha (MS-EMF 2.2.26); EMF+ path gradient
+// meshes carry 8-bit colors scaled to 16 bits and one alpha shared by every
+// vertex of the mesh.
 type GradientTriangle struct {
 	Points [3]Point
 	Colors [3]color.NRGBA64

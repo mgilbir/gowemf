@@ -293,6 +293,26 @@ combine modes exercised, region trees, path clips, the clockwise angle
 convention, cardinal splines, pen caps and image placement. Its banded
 gradients follow the same direction, preset stops and mirrored wrap.
 
+Caps, compound pens and path gradients have their own scenes. `plus-caps.emf`
+(square and round caps chosen separately at each end) agrees with LibreOffice.
+LibreOffice 24.2.7.2 diverges on the rest:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-plus-square-anchor.emf` | SquareAnchor drawn wider than the line | A square of the line width (MS-EMFPLUS 2.1.1.17) |
+| `lo-plus-compound.emf` | Compound pens drawn as one solid full-width line | Parallel bands |
+| `lo-plus-path-gradient.emf` | An elliptical blend that also covers the filled area outside the boundary | A center-to-boundary fan inside the boundary only |
+
+LibreOffice could not settle the custom-cap convention. A file with an
+adjustable arrow cap fails to convert ("Unspecified Application Error"). Path
+caps are drawn reversed relative to the line, with an asymmetric cap
+re-centered. Custom caps therefore stay reported.
+
+Twenty-six planted defects in caps, compound pens and path gradients were each
+caught by the offline tests, and those that change a scene also fail the
+LibreOffice comparison. Three more were caught by the reference rasterizer's
+compound and mixed-cap test.
+
 Forty-five planted EMF+ defects were each caught by the offline tests before
 being restored, and those touching a scene also fail the LibreOffice comparison:
 - the pixel offset and its Half mode, DPI axes and page scale;

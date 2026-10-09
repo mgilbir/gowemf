@@ -100,7 +100,7 @@ func (b *backend) StrokePath(path gowemf.Path, s gowemf.Stroke, clip gowemf.Clip
 	if err != nil {
 		return err
 	}
-	pen := raster.Stroke{Width: s.Width, Transform: raster.Matrix(s.Transform), Hairline: s.Hairline, Cap: raster.Cap(s.Cap), Join: raster.Join(s.Join), MiterLimit: s.MiterLimit, PixelCenter: raster.Point(s.PixelCenter)}
+	pen := raster.Stroke{Width: s.Width, Transform: raster.Matrix(s.Transform), Hairline: s.Hairline, Cap: raster.Cap(s.Cap), EndCap: raster.Cap(s.EndCap), Compound: s.Compound, Join: raster.Join(s.Join), MiterLimit: s.MiterLimit, PixelCenter: raster.Point(s.PixelCenter)}
 	return b.canvas.Stroke(rpath(path), pen, p, b.clip(clip))
 }
 

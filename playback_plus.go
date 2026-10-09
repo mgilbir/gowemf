@@ -649,6 +649,131 @@ func (p *player) plusComposite(r Record, paint *Paint) error {
 	return nil
 }
 
+// plusCaps maps the line caps MS-EMFPLUS 2.1.1.17 fully specifies: NoAnchor
+// ends the line at its last point like Flat, and SquareAnchor is a square
+// centered on the last point with the line width as its side, like Square.
+var plusCaps = map[uint32]LineCap{0: CapFlat, 1: CapSquare, 2: CapRound, 0x10: CapFlat, 0x11: CapSquare}
+
+// plusCompound validates a compound line (MS-EMFPLUS 2.2.2.9). Which side
+// of the line fraction 0 lies on is not specified, so only arrays symmetric
+// about the center are drawn. How bands meet at bevel and round joins is not
+// specified either; with miter joins every reading agrees, provided no
+// corner exceeds the miter limit (checked against the path in plusDraw).
+func (p *player) plusCompound(r Record, pen PlusPen, s *Stroke) error {
+	c := pen.Compound
+	if len(c)%2 != 0 {
+		return malformed(r.Offset, "EMF+ compound line array")
+	}
+	for i, v := range c {
+		if !(v >= 0 && v <= 1) || (i > 0 && v < c[i-1]) {
+			return malformed(r.Offset, "EMF+ compound line array")
+		}
+		if math.Abs(v+c[len(c)-1-i]-1) > 1e-6 {
+			return p.unsupported(r, "EMF+ asymmetric compound pen")
+		}
+	}
+	switch {
+	case pen.Width == 0:
+		return p.unsupported(r, "EMF+ zero-width compound pen")
+	case pen.Join != 0:
+		return p.unsupported(r, "EMF+ compound pen with bevel or round joins")
+	case pen.LineStyle != 0:
+		return p.unsupported(r, "EMF+ dashed compound pen")
+	}
+	s.Compound = append([]float64(nil), c...)
+	return nil
+}
+
+// compoundDrawable reports whether a compound stroke of path is exact: open
+// figures need flat caps, and every corner must stay within the miter limit,
+// so that the bands' parallel lines are mitered like the full stroke.
+func compoundDrawable(path Path, s *Stroke) (string, bool) {
+	inv, ok := invertMatrix(s.Transform)
+	if !ok {
+		return "", true // a degenerate pen draws nothing
+	}
+	var figure []segmentTangents
+	start, cur := Point{}, Point{}
+	check := func(closed bool) (string, bool) {
+		if len(figure) == 0 {
+			return "", true
+		}
+		if !closed && (s.Cap != CapFlat || (s.EndCap != 0 && s.EndCap != CapFlat)) {
+			return "EMF+ compound pen with non-flat caps on an open figure", false
+		}
+		n := len(figure)
+		joins := n - 1
+		if closed {
+			joins = n
+		}
+		for i := 0; i < joins; i++ {
+			a, b := inv.Apply(figure[i].out), inv.Apply(figure[(i+1)%n].in)
+			la, lb := math.Hypot(a.X, a.Y), math.Hypot(b.X, b.Y)
+			if la == 0 || lb == 0 {
+				continue
+			}
+			// The miter extends 1/cos(phi/2) half-widths for a turn of phi.
+			cos := (a.X*b.X + a.Y*b.Y) / (la * lb)
+			half := math.Sqrt(math.Max(0, (1+cos)/2))
+			if half == 0 || 1/half > s.MiterLimit {
+				return "EMF+ compound pen corner beyond the miter limit", false
+			}
+		}
+		return "", true
+	}
+	k := 0
+	for _, v := range path.Verbs {
+		switch v {
+		case PathMoveTo:
+			if why, ok := check(false); !ok {
+				return why, false
+			}
+			figure = figure[:0]
+			start, cur = path.Points[k], path.Points[k]
+			k++
+		case PathLineTo:
+			q := path.Points[k]
+			if q != cur {
+				d := Point{q.X - cur.X, q.Y - cur.Y}
+				figure = append(figure, segmentTangents{d, d})
+			}
+			cur = q
+			k++
+		case PathCubicTo:
+			c1, c2, q := path.Points[k], path.Points[k+1], path.Points[k+2]
+			in := firstNonZero(Point{c1.X - cur.X, c1.Y - cur.Y}, Point{c2.X - cur.X, c2.Y - cur.Y}, Point{q.X - cur.X, q.Y - cur.Y})
+			out := firstNonZero(Point{q.X - c2.X, q.Y - c2.Y}, Point{q.X - c1.X, q.Y - c1.Y}, Point{q.X - cur.X, q.Y - cur.Y})
+			if in != (Point{}) {
+				figure = append(figure, segmentTangents{in, out})
+			}
+			cur = q
+			k += 3
+		case PathClose:
+			if cur != start {
+				d := Point{start.X - cur.X, start.Y - cur.Y}
+				figure = append(figure, segmentTangents{d, d})
+			}
+			if why, ok := check(true); !ok {
+				return why, false
+			}
+			figure = figure[:0]
+			cur = start
+		}
+	}
+	return check(false)
+}
+
+type segmentTangents struct{ in, out Point }
+
+func firstNonZero(v ...Point) Point {
+	for _, p := range v {
+		if p != (Point{}) {
+			return p
+		}
+	}
+	return Point{}
+}
+
 // GDI+ dash patterns in multiples of the pen width (MS-EMFPLUS 2.1.1.21).
 var plusDashes = [...][]float64{1: {3, 1}, 2: {1, 1}, 3: {3, 1, 1, 1}, 4: {3, 1, 1, 1, 1, 1}}
 
@@ -661,13 +786,23 @@ func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
 		return nil, err
 	}
 	pen := obj.value.(PlusPen)
+	startCap, okStart := plusCaps[pen.StartCap]
+	endCap, okEnd := plusCaps[pen.EndCap]
 	switch {
-	case len(pen.Compound) != 0:
-		return nil, p.unsupported(r, "EMF+ compound pen")
-	case pen.CustomStartCap != nil || pen.CustomEndCap != nil:
+	case pen.CustomStartCap != nil || pen.CustomEndCap != nil || pen.StartCap == 0xff || pen.EndCap == 0xff:
+		// MS-EMFPLUS does not define the coordinate system of cap paths or
+		// where an adjustable arrow sits relative to the line end.
 		return nil, p.unsupported(r, "EMF+ custom line cap")
-	case pen.StartCap != pen.EndCap || pen.StartCap > 2:
-		return nil, p.unsupported(r, "EMF+ triangle, anchor or mixed line caps")
+	case !validPlusLineCap(pen.StartCap) || !validPlusLineCap(pen.EndCap):
+		return nil, malformed(r.Offset, "EMF+ line cap")
+	case !okStart || !okEnd:
+		// The triangle's height and the round, diamond and arrow anchors'
+		// sizes are not specified (MS-EMFPLUS 2.1.1.17).
+		return nil, p.unsupported(r, "EMF+ triangle, round, diamond or arrow line cap")
+	case pen.LineStyle != 0 && (startCap != CapFlat || endCap != CapFlat):
+		// Line caps apply at the figure ends and the dash cap at dash ends,
+		// which Stroke cannot express separately.
+		return nil, p.unsupported(r, "EMF+ dashed pen with non-flat line caps")
 	case pen.Join > 3:
 		return nil, malformed(r.Offset, "EMF+ line join")
 	case pen.Join == 3:
@@ -698,7 +833,15 @@ func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
 	if pen.Flags&16 != 0 {
 		miter = pen.MiterLimit
 	}
-	s := &Stroke{Paint: *paint, Cap: [...]LineCap{CapFlat, CapSquare, CapRound}[pen.StartCap], Join: [...]LineJoin{JoinMiter, JoinBevel, JoinRound}[pen.Join], MiterLimit: miter, Dash: DashSolid}
+	s := &Stroke{Paint: *paint, Cap: startCap, Join: [...]LineJoin{JoinMiter, JoinBevel, JoinRound}[pen.Join], MiterLimit: miter, Dash: DashSolid}
+	if endCap != startCap {
+		s.EndCap = endCap
+	}
+	if len(pen.Compound) != 0 {
+		if err := p.plusCompound(r, pen, s); err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case pen.Width == 0:
 		s.Hairline = true
@@ -729,6 +872,15 @@ func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
 }
 
 func (p *player) plusFill(r Record, path Path, rule FillRule, id uint32, solid bool, m Matrix, clip Clip) error {
+	if !solid {
+		obj, err := p.plusObjectAt(r, id)
+		if err != nil {
+			return err
+		}
+		if b := obj.value.(PlusBrush); b.Type == 3 {
+			return p.plusPathGradientFill(r, b.PathGradient, path, rule, m, clip)
+		}
+	}
 	paint, err := p.plusPaint(r, id, solid, m)
 	if err != nil || paint == nil {
 		return err
@@ -743,6 +895,11 @@ func (p *player) plusDraw(r Record, path Path, id uint32, m Matrix) error {
 	s, err := p.plusStroke(r, id, m)
 	if err != nil || s == nil {
 		return err
+	}
+	if len(s.Compound) != 0 {
+		if why, ok := compoundDrawable(path, s); !ok {
+			return p.unsupported(r, why)
+		}
 	}
 	return p.backend.StrokePath(path, *s, p.plusCurrentClip())
 }

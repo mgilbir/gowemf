@@ -203,18 +203,21 @@ func TestPlayReportsUnsupportedOperations(t *testing.T) {
 	}
 	// Every unimplemented drawing family is reported, never silently dropped.
 	for name, rec := range map[string][]byte{
-		"flood fill":    emfRecord(EMRExtFloodFill, longs(1, 1, 0, 0)),
-		"gradient fill": emfRecord(EMRGradientFill, longs(0, 0, 0, 0, 0, 0, 0)),
-		"region paint":  emfRecord(EMRPaintRgn, cat(longs(0, 0, 0, 0, 32), longs(32, 1, 0, 0, 0, 0, 0, 0))),
-		"WidenPath":     cat(emfEmpty(EMRBeginPath), emfEmpty(EMREndPath), emfEmpty(EMRWidenPath)),
-		"ROP2":          cat(emfValue(EMRSetROP2, 7), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"layout":        cat(emfValue(EMRSetLayout, 1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"COLORREF":      cat(emfBrush(1, 0, 0x01000003), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"raster op":     emfBlt(EMRBitBlt, 0, 0, 4, 4, 0x00660046, 0, 0, 0, 0, nil, nil),
-		"hatch":         cat(emfRecord(EMRCreateBrushIndirect, longs(1, 2, 0, 7)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"monochrome":    cat(emfRecord(EMRCreateMonoBrush, longs(1, 0, 0, 0, 0, 0)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"ICM":           cat(colorSpaceRecord(false).Raw, emfValue(EMRSetColorSpace, 1), emfValue(EMRSetICMMode, 2), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"masked":        maskBltFixture(true),
+		"flood fill":       emfRecord(EMRExtFloodFill, longs(1, 1, 0, 0)),
+		"gradient fill":    emfRecord(EMRGradientFill, longs(0, 0, 0, 0, 0, 0, 0)),
+		"region inversion": emfRecord(EMRInvertRgn, cat(longs(0, 0, 0, 0, 32), longs(32, 1, 0, 0, 0, 0, 0, 0))),
+		"WidenPath":        cat(emfEmpty(EMRBeginPath), emfEmpty(EMREndPath), emfEmpty(EMRWidenPath)),
+		"ROP2":             cat(emfValue(EMRSetROP2, 7), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"layout":           cat(emfValue(EMRSetLayout, 1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"COLORREF":         cat(emfBrush(1, 0, 0x01000003), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"raster op":        emfBlt(EMRBitBlt, 0, 0, 4, 4, 0x00660046, 0, 0, 0, 0, nil, nil),
+		"hatch":            cat(emfRecord(EMRCreateBrushIndirect, longs(1, 2, 0, 7)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"monochrome": func() []byte {
+			i, b := sceneDIB(2, 2, false, quadrantsN(2, 2)) // 24-bit, not monochrome
+			return cat(emfRecord(EMRCreateMonoBrush, cat(longs(1, 0, 32, int32(len(i)), int32(32+len(i)), int32(len(b))), i, b)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1))
+		}(),
+		"ICM":    cat(colorSpaceRecord(false).Raw, emfValue(EMRSetColorSpace, 1), emfValue(EMRSetICMMode, 2), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"masked": maskBltFixture(true),
 		"partial scans": func() []byte {
 			i, b := sceneDIB(4, 4, false, quadrantsN(4, 4))
 			return emfSetDIBitsToDevice(0, 0, 0, 0, 4, 4, 2, i, b)
@@ -534,15 +537,15 @@ func TestPlayClipRegions(t *testing.T) {
 	if c := b.fills[1].clip; len(c) != 1 || c[0] != b.fills[0].clip[0] {
 		t.Fatalf("reset clip %+v", c)
 	}
-	// A WMF region selected as a clip is reported.
+	// A WMF region selected with SelectObject or SelectClipRegion replaces
+	// the clip; its scans are logical units.
 	region := testRecord(WMF, MetaCreateRegion, 0, wmfRegionFixture())
-	var reasons []string
-	record(t, wmfScene(96, 64, 1, region, wmfRec(MetaSelectObject, 0)), PlayOptions{Unsupported: func(u UnsupportedOperation) error {
-		reasons = append(reasons, u.Reason)
-		return nil
-	}})
-	if len(reasons) != 1 || reasons[0] != "WMF region clipping" {
-		t.Fatal(reasons)
+	for _, sel := range []Record{wmfRec(MetaSelectObject, 0), wmfRec(MetaSelectClipRegion, 0)} {
+		b := record(t, wmfScene(48, 32, 1, wmfBox(MetaIntersectClipRect, 0, 0, 1, 1), region, sel, wmfBox(MetaRectangle, 0, 0, 40, 30)), PlayOptions{})
+		c := b.fills[0].clip
+		if len(c) != 1 || c[0].Op != ClipReplace || c[0].Base != nil || !near(c[0].Area.Points[0], Point{6, 10}) || !near(c[0].Area.Points[2], Point{18, 12}) {
+			t.Fatalf("WMF region clip %+v", c)
+		}
 	}
 }
 

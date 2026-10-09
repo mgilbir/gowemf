@@ -363,3 +363,24 @@ func maskChannel(v, m uint32) byte {
 	max := uint64(m >> shift)
 	return byte((uint64((v&m)>>shift)*255 + max/2) / max)
 }
+
+// monoBits returns the pixel indexes of an uncompressed 1-bit DIB in top-down
+// order, for monochrome pattern brushes whose colors come from the playback
+// device context rather than the DIB color table.
+func (d *DIB) monoBits() ([]bool, error) {
+	if d == nil || d.bpp != 1 || d.compression != 0 {
+		return nil, failure(0, "monochrome pattern bitmap format", ErrUnsupported)
+	}
+	out := make([]bool, d.width*d.height)
+	for y := 0; y < d.height; y++ {
+		sy := y
+		if !d.topDown {
+			sy = d.height - 1 - y
+		}
+		row := d.pixels[sy*d.stride : (sy+1)*d.stride]
+		for x := 0; x < d.width; x++ {
+			out[y*d.width+x] = row[x/8]>>uint(7-x%8)&1 != 0
+		}
+	}
+	return out, nil
+}

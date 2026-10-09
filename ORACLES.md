@@ -46,6 +46,10 @@ Intentional normalization:
 
 ### Known POI discrepancies
 
+- POI 5.4.1 reads EMF and WMF palette entries as flags, blue, green, red,
+  following MS-EMF 2.2.18's drawing. Playback uses GDI's PALETTEENTRY order,
+  which MS-WMF 2.2.2.13 specifies. A generated palette pins POI's reading.
+
 - In `wrench.emf`, POI interprets bytes belonging to a variable-length header
   description as header-extension fields. These values are not used as an oracle
   for extension support. gowemf currently exposes extensions without claiming to
@@ -229,6 +233,29 @@ Generated inputs, PNGs, wrapper documents and environment information remain
 ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.
 No GPL/MPL implementation source is read or ported. Windows GDI/GDI+ remains
 unavailable and no Windows render-equivalence claim is made.
+
+### Fill scenes
+
+Region fills (FillRgn on an L shape and PaintRgn) match LibreOffice exactly
+with a null pen. LibreOffice 24.2.7.2 diverges on every other fill:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-gradient.emf` | EMR_GRADIENTFILL draws nothing | Rectangle and triangle Gouraud meshes |
+| `lo-frame-region.emf` | EMR_FRAMERGN draws nothing | Exact 3 by 2 unit border |
+| `lo-region-outline.emf` | FillRgn and PaintRgn also stroke the outline with the selected pen | Brush fill only |
+| `lo-mono-brush.emf` | Monochrome brush fills with the background color only | Text color for clear bits, background for set bits |
+| `lo-palette-index.emf` | PALETTEINDEX colors drawn black; DIB_PAL_COLORS bitmap not drawn | Selected logical palette |
+| `lo-regions.wmf` | WMF FillRegion, PaintRegion and SelectClipRegion ignored | Region fills and clip |
+
+Because LibreOffice draws palette colors black, it cannot settle the palette
+byte order; POI's reading is pinned separately above. Twelve planted fill
+defects (palette byte order, PALETTERGB, AnimatePalette scope, monochrome
+colors, frame erosion and orientation, RECT_V, WMF scans, DIB_PAL_COLORS,
+region work budget, multi-rectangle regions and WMF clip regions) were each
+caught by the offline tests; those touching a scene also fail its probes.
+The pinned corpus now plays without reported omissions once a text backend is
+present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
 
 ### Text scenes
 

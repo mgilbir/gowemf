@@ -110,9 +110,15 @@ intersect/union/xor/difference/replace/offset steps.
 The EMF header frame, or the WMF placeable bounds, is mapped onto `Destination`.
 WMF files without a placeable header need `PlayOptions.Placeable`. EMF+ files
 play only their GDI fallback, and only when `Stream.PreferGDI` is set: EMF+
-drawing is not implemented. Region painting, gradients, flood fill,
-palette-relative colors, destination-dependent raster operations and other
-omissions are never skipped silently.
+drawing is not implemented. Flood fill, region inversion, destination-dependent
+raster operations and other omissions are never skipped silently.
+
+Region painting (FillRgn, PaintRgn, FrameRgn and the WMF region records),
+monochrome pattern brushes colored by the text and background colors, logical
+palettes with PALETTEINDEX colors and DIB_PAL_COLORS bitmaps, and WMF region
+clipping are resolved into ordinary fills and clips. Gradient fills are
+delivered as Gouraud-shaded triangle meshes to backends that also implement
+`GradientBackend`; others get them reported.
 
 Backends that also implement `TextBackend` (`MeasureText` and `DrawText`)
 receive text. `Play` does the GDI placement itself: text alignment, explicit

@@ -183,13 +183,13 @@ GDI fallback on request. Coverage of each family:
 | Family | Played | Reported as unsupported |
 | --- | --- | --- |
 | State | SaveDC/RestoreDC (relative and WMF absolute), map modes 1–8, window/viewport origin/extent/offset/scale, Set/ModifyWorldTransform (all four modes), background mode/color, poly-fill mode, ROP2, stretch mode, arc direction, miter limit, brush origin, current position | Right-to-left layout; ICM conversion with a non-sRGB source, output profile or proofing target |
-| Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch and DIB pattern brushes, stock objects including DC_PEN/DC_BRUSH defaults, WMF lowest-free-slot reuse, EMF handle reuse | Monochrome and Bitmap16 pattern brushes, DIB pattern pens, dithered hatch styles, palette-relative COLORREFs and DIB colors, selecting a WMF region |
+| Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch, DIB and monochrome pattern brushes (EMR_CREATEMONOBRUSH and 1-bit Bitmap16 patterns), stock objects including DC_PEN/DC_BRUSH defaults, logical palettes (create, select, set, animate, resize) with PALETTEINDEX and PALETTERGB colors and DIB_PAL_COLORS bitmaps, WMF lowest-free-slot reuse, EMF handle reuse | Colored Bitmap16 patterns, DIB pattern pens, dithered hatch styles, DIB_PAL_INDICES bitmaps, palettes after EMR_COLORCORRECTPALETTE, PALETTEINDEX with the default palette |
 | Geometry | Polygons/polylines/polypolygons/polypolylines (16/32-bit), Bézier and "To" forms, PolyDraw, LineTo/MoveTo, Rectangle, RoundRect, Ellipse, Arc/ArcTo/Chord/Pie, AngleArc, SetPixel | — |
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
-| Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, save/restore | WMF SelectClipRegion |
+| Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, WMF SelectClipRegion and region SelectObject, save/restore | — |
 | Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY, halftone with a color adjustment |
 | Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; right-to-left reading order; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
-| Fills | — | Region painting, flood fill, gradient fill |
+| Fills | FillRgn, PaintRgn, FrameRgn; WMF FillRegion, PaintRegion, FrameRegion; EMR_GRADIENTFILL rectangle and triangle modes through a `GradientBackend` | InvertRgn and InvertRegion and flood fill, which read the destination; gradients for backends without `GradientBackend` |
 
 Interpretations where the specifications leave room or conflict:
 
@@ -244,6 +244,26 @@ Interpretations where the specifications leave room or conflict:
   MS-WMF 2.3.5.25 describes the field as unsigned. Symbol-charset bytes map to
   U+F000+byte, the private-use range symbol fonts' Windows cmaps use. Charsets
   map to code pages as Windows' TranslateCharsetInfo documents.
+- Palette entries are read as GDI PALETTEENTRY values (red, green, blue,
+  flags), as MS-WMF 2.2.2.13 specifies. MS-EMF 2.2.18 draws LogPaletteEntry as
+  reserved, blue, green, red, which is that structure read as a most-
+  significant-first DWORD; Apache POI follows the drawing (see ORACLES.md).
+  Palette updates modify the palette object in place, so every selection of it
+  sees them. AnimatePalette changes only PC_RESERVED entries. COLORREF's
+  reserved byte must be zero (MS-WMF 2.2.2.8); GDI's PALETTEINDEX (0x01) and
+  PALETTERGB (0x02) forms are resolved through the selected logical palette and
+  as plain RGB on a true-color device. Palette entry allocations share the
+  playback pixel budget.
+- Monochrome pattern brushes draw clear bits in the text color and set bits in
+  the background color, as GDI's CreatePatternBrush documents; the DIB's own
+  color table and Usage are ignored.
+- Region data is in logical units, as for ExtSelectClipRgn; WMF scans are
+  logical (MS-WMF 2.2.2.21). FrameRgn draws R minus R eroded by the brush box,
+  computed exactly as R intersected with R's complement dilated by that box;
+  the band sweep is charged to a 16,000,000-step budget per Play call.
+- Rectangle gradients become two triangles whose shading is exactly linear
+  along the gradient axis; triangle gradients interpolate in destination
+  space. TriVertex alpha is ignored (MS-EMF 2.2.26). Colors keep 16 bits.
 - GDI's integer pixel rules beyond edge exclusion belong to the backend.
   `Stroke.PixelCenter` gives half a device pixel in destination units for
   backends that center lines on device pixels, as GDI does.

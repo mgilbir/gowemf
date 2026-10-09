@@ -9,8 +9,7 @@ import (
 func (p *player) dispatch(c Command) error {
 	r := c.Source
 	if c.HasObjectID {
-		p.create(r, c.ObjectID, c.Body)
-		return nil
+		return p.create(r, c.ObjectID, c.Body)
 	}
 	if r.Format == WMF {
 		return p.wmf(c)
@@ -24,11 +23,18 @@ func (p *player) dispatch(c Command) error {
 func (p *player) wmf(c Command) error {
 	r, body := c.Source, c.Body
 	switch r.Type & 255 {
-	case 0x00, 0x05, 0x35, 0x31, 0x26, 0x34, 0x36, 0x37, 0x39:
-		// EOF, SetRelAbs (ignored by MS-WMF), RealizePalette, mapper flags,
-		// escapes and palette maintenance. Palette-relative colors are
-		// rejected where they are used.
+	case 0x00, 0x05, 0x35, 0x31, 0x26:
+		// EOF, SetRelAbs (ignored by MS-WMF), RealizePalette, mapper flags
+		// and escapes.
 		return nil
+	case 0x34:
+		p.selectPalette(body.(Value).Value)
+	case 0x37:
+		return p.updatePalette(r, body.(Palette), "set")
+	case 0x36:
+		return p.updatePalette(r, body.(Palette), "animate")
+	case 0x39:
+		return p.updatePalette(r, body.(Palette), "resize")
 	case 0x2e:
 		p.dc.textAlign = body.(Value).Value
 	case 0x09:
@@ -135,13 +141,38 @@ func (p *player) wmf(c Command) error {
 		}
 		return p.blit(blit{r: r, rop: v.RasterOperation, dest: v.Destination, destSize: v.DestinationSize, src: v.Source, srcSize: v.SourceSize, hasBitmap: !v.DeviceSource, deviceBitmapWhy: why, colorState: c.ColorState})
 	case 0x2c:
-		return p.unsupported(r, "WMF region clipping")
+		rects, err := p.regionObject(r, body.(Value).Value)
+		if err != nil {
+			return err
+		}
+		return p.selectRegionClip(r, rects)
 	case 0x21:
 		return p.text(c, body.(Text), false)
 	case 0x19, 0x48:
 		return p.unsupported(r, "flood fill")
-	case 0x28, 0x29, 0x2a, 0x2b:
-		return p.unsupported(r, "region painting")
+	case 0x28, 0x29:
+		v := body.(RegionPaint)
+		rects, err := p.regionObject(r, v.Region)
+		if err != nil {
+			return err
+		}
+		brush, err := p.brushObject(r, v.Brush)
+		if err != nil {
+			return err
+		}
+		var frame *Point
+		if r.Type&255 == 0x29 {
+			frame = &v.Frame
+		}
+		return p.paintRegion(c, rects, brush, frame)
+	case 0x2b:
+		rects, err := p.regionObject(r, body.(Value).Value)
+		if err != nil {
+			return err
+		}
+		return p.paintRegion(c, rects, p.dc.brush.brush, nil)
+	case 0x2a:
+		return p.unsupported(r, "region inversion reads the destination")
 	default:
 		return p.unsupported(r, fmt.Sprintf("WMF record 0x%04x", r.Type))
 	}
@@ -151,13 +182,23 @@ func (p *player) wmf(c Command) error {
 func (p *player) emf(c Command) error {
 	r, body := c.Source, c.Body
 	switch r.Type {
-	case EMRHeader, EMREOF, EMRComment, EMRSetMapperFlags, EMRSelectPalette, EMRRealizePalette, EMRCreatePalette,
-		EMRSetPaletteEntries, EMRResizePalette, EMRSetICMMode, EMRCreateColorSpace,
-		EMRCreateColorSpaceW, EMRSetColorSpace, EMRDeleteColorSpace, EMRSetColorAdjustment,
-		EMRSetICMProfileA, EMRSetICMProfileW, EMRColorMatchToTargetW, EMRColorCorrectPalette:
+	case EMRHeader, EMREOF, EMRComment, EMRSetMapperFlags, EMRRealizePalette,
+		EMRSetICMMode, EMRCreateColorSpace, EMRCreateColorSpaceW, EMRSetColorSpace,
+		EMRDeleteColorSpace, EMRSetColorAdjustment, EMRSetICMProfileA,
+		EMRSetICMProfileW, EMRColorMatchToTargetW:
 		// Color state is not drawn here; ColorState is checked by every
-		// drawing operation and palette-relative colors are rejected.
+		// drawing operation.
 		return nil
+	case EMRSelectPalette:
+		p.selectPalette(body.(Value).Value)
+	case EMRSetPaletteEntries:
+		return p.updatePalette(r, body.(Palette), "set")
+	case EMRResizePalette:
+		return p.updatePalette(r, body.(Palette), "resize")
+	case EMRColorCorrectPalette:
+		if pal := p.palette(body.(Palette).Handle); pal != nil {
+			pal.corrected = true
+		}
 	case EMRSetTextAlign:
 		p.dc.textAlign = body.(Value).Value
 	case EMRSetTextColor:
@@ -323,10 +364,24 @@ func (p *player) emf(c Command) error {
 		return p.polyText(c, body.(PolyText), r.Type == EMRPolyTextOutW)
 	case EMRExtFloodFill:
 		return p.unsupported(r, "flood fill")
-	case EMRFillRgn, EMRFrameRgn, EMRInvertRgn, EMRPaintRgn:
-		return p.unsupported(r, "region painting")
+	case EMRFillRgn, EMRFrameRgn, EMRPaintRgn:
+		v := body.(EMFRegionPaint)
+		brush := p.dc.brush.brush
+		if v.HasBrush {
+			var err error
+			if brush, err = p.brushObject(r, v.Brush); err != nil {
+				return err
+			}
+		}
+		var frame *Point
+		if r.Type == EMRFrameRgn {
+			frame = &v.Frame
+		}
+		return p.paintRegion(c, regionRects(v.Region), brush, frame)
+	case EMRInvertRgn:
+		return p.unsupported(r, "region inversion reads the destination")
 	case EMRGradientFill:
-		return p.unsupported(r, "gradient fill")
+		return p.gradient(c, body.(Gradient))
 	default:
 		return p.unsupported(r, fmt.Sprintf("EMF record %d", r.Type))
 	}
@@ -674,13 +729,6 @@ func (p *player) drawable(r Record, cs *ColorPlaybackState) error {
 	return nil
 }
 
-func (p *player) color(r Record, ref uint32) (color.NRGBA, error) {
-	if ref>>24 != 0 {
-		return color.NRGBA{}, p.unsupported(r, "palette-relative COLORREF")
-	}
-	return color.NRGBA{byte(ref), byte(ref >> 8), byte(ref >> 16), 255}, nil
-}
-
 // rop2 applies the foreground mix mode. Only modes independent of the
 // destination are supported; R2_NOP draws nothing.
 func (p *player) rop2(r Record, paint *Paint) (*Paint, error) {
@@ -750,28 +798,66 @@ func (p *player) brushPaint(r Record, g *gdiBrush, m Matrix, applyROP2 bool) (*P
 		default:
 			return nil, p.unsupported(r, fmt.Sprintf("hatch style %d", g.hatch))
 		}
-	case 5:
-		if g.usage != 0 {
-			return nil, p.unsupported(r, "palette-relative DIB pattern colors")
+	case 3:
+		if g.monoDIB && g.mono == nil {
+			// Only the bits matter: the DC supplies both colors, so the
+			// bitmap is read as indexes whatever its Usage and color table
+			// (real writers record DIB_PAL_INDICES with no table).
+			d, err := ParseDIB(g.info, g.bits, 2, monoIndexPalette, p.options.Images)
+			if err == nil {
+				err = p.spendPixels(r, d.width, d.height)
+			}
+			var bits []bool
+			if err == nil {
+				bits, err = d.monoBits()
+			}
+			if err != nil {
+				return nil, p.imageError(r, err)
+			}
+			g.mono = &monoPattern{w: d.width, h: d.height, bits: bits}
 		}
-		if g.pattern == nil {
+		fg, err := p.color(r, p.dc.textColor)
+		if err != nil {
+			return nil, err
+		}
+		bg, err := p.color(r, p.dc.bkColor)
+		if err != nil {
+			return nil, err
+		}
+		im, err := g.mono.image(p, r, fg, bg)
+		if err != nil {
+			return nil, err
+		}
+		paint.Kind, paint.Pattern = PaintPattern, im
+	case 5:
+		logical, err := p.logicalPalette(r, g.usage)
+		if err != nil {
+			return nil, err
+		}
+		// A DIB_PAL_COLORS pattern takes its colors from the palette selected
+		// when it is used, so only DIB_RGB_COLORS patterns are cached.
+		pattern := g.pattern
+		if pattern == nil || g.usage != 0 {
 			var d *DIB
 			if g.packed != nil {
-				d, err = ParsePackedDIB(g.packed, 0, nil, p.options.Images)
+				d, err = ParsePackedDIB(g.packed, g.usage, logical, p.options.Images)
 			} else {
-				d, err = ParseDIB(g.info, g.bits, 0, nil, p.options.Images)
+				d, err = ParseDIB(g.info, g.bits, g.usage, logical, p.options.Images)
 			}
 			if err == nil {
 				err = p.spendPixels(r, d.width, d.height)
 			}
 			if err == nil {
-				g.pattern, err = d.ImageWithColorTransform(p.options.ColorTransform)
+				pattern, err = d.ImageWithColorTransform(p.options.ColorTransform)
 			}
 			if err != nil {
 				return nil, p.imageError(r, err)
 			}
+			if g.usage == 0 {
+				g.pattern = pattern
+			}
 		}
-		paint.Kind, paint.Pattern = PaintPattern, opaqueImage{g.pattern}
+		paint.Kind, paint.Pattern = PaintPattern, opaqueImage{pattern}
 	default:
 		return nil, p.unsupported(r, fmt.Sprintf("brush style %d", g.style))
 	}

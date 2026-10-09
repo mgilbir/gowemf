@@ -612,3 +612,73 @@ func NeighborhoodMismatch(a, b image.Image, delta uint32, radius int) (worst, to
 	}
 	return worst, total, nil
 }
+
+// Triangle is a Gouraud-shaded triangle: colors interpolate linearly over it.
+type Triangle struct {
+	P [3]Point
+	C [3]color.NRGBA64
+}
+
+// FillGouraud paints a triangle mesh. Coverage is that of the whole mesh so
+// shared edges have no seams; each pixel takes the barycentric color of the
+// triangle containing its center, or of the nearest triangle at the mesh edge.
+// 16-bit channels map to 8 bits by their high byte, as GDI's true-color
+// gradient fills do.
+func (c *Canvas) FillGouraud(mesh []Triangle, clip []*ClipNode) error {
+	w, h := c.size()
+	rings := make([]polygon, len(mesh))
+	for i, t := range mesh {
+		rings[i] = polygon{t.P[0], t.P[1], t.P[2]}
+		// Orient every ring the same way so NonZero unions them.
+		if (t.P[1].X-t.P[0].X)*(t.P[2].Y-t.P[0].Y)-(t.P[1].Y-t.P[0].Y)*(t.P[2].X-t.P[0].X) < 0 {
+			rings[i][1], rings[i][2] = rings[i][2], rings[i][1]
+		}
+	}
+	cov := coverage(rings, NonZero, w, h)
+	mask := c.mask(clip)
+	bary := func(t Triangle, p Point) (float64, float64, float64, bool) {
+		d := (t.P[1].Y-t.P[2].Y)*(t.P[0].X-t.P[2].X) + (t.P[2].X-t.P[1].X)*(t.P[0].Y-t.P[2].Y)
+		if d == 0 {
+			return 0, 0, 0, false
+		}
+		a := ((t.P[1].Y-t.P[2].Y)*(p.X-t.P[2].X) + (t.P[2].X-t.P[1].X)*(p.Y-t.P[2].Y)) / d
+		b := ((t.P[2].Y-t.P[0].Y)*(p.X-t.P[2].X) + (t.P[0].X-t.P[2].X)*(p.Y-t.P[2].Y)) / d
+		return a, b, 1 - a - b, true
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			a := math.Min(cov[y*w+x], 1) * mask[y*w+x]
+			if a <= 0 {
+				continue
+			}
+			p := Point{float64(x) + .5, float64(y) + .5}
+			best, bestScore := -1, math.Inf(-1)
+			var wa, wb, wc float64
+			for i, t := range mesh {
+				ba, bb, bc, ok := bary(t, p)
+				if !ok {
+					continue
+				}
+				if score := math.Min(ba, math.Min(bb, bc)); score > bestScore {
+					best, bestScore, wa, wb, wc = i, score, ba, bb, bc
+				}
+			}
+			if best < 0 {
+				continue
+			}
+			// Clamp to the triangle for pixels just outside it.
+			wa, wb, wc = math.Max(wa, 0), math.Max(wb, 0), math.Max(wc, 0)
+			s := wa + wb + wc
+			t := mesh[best]
+			ch := func(k int) uint8 {
+				v := [3]float64{}
+				for i, col := range t.C {
+					v[i] = float64([3]uint16{col.R, col.G, col.B}[k])
+				}
+				return uint8(min(255, math.Round((wa*v[0]+wb*v[1]+wc*v[2])/s/256)))
+			}
+			blend(c.Image, y*c.Image.Stride+x*4, color.NRGBA{ch(0), ch(1), ch(2), 255}, a)
+		}
+	}
+	return nil
+}

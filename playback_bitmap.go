@@ -64,15 +64,15 @@ func (p *player) blit(b blit) error {
 	if b.srcSize.X == 0 || b.srcSize.Y == 0 || (b.plg == nil && !b.deviceSize && (b.destSize.X == 0 || b.destSize.Y == 0)) {
 		return nil
 	}
-	if b.usage != 0 {
-		return p.unsupported(b.r, "palette-relative DIB colors")
+	logical, err := p.logicalPalette(b.r, b.usage)
+	if err != nil {
+		return err
 	}
 	var d *DIB
-	var err error
 	if b.packed != nil {
-		d, err = ParsePackedDIB(b.packed, 0, nil, p.options.Images)
+		d, err = ParsePackedDIB(b.packed, b.usage, logical, p.options.Images)
 	} else {
-		d, err = ParseDIB(b.info, b.bits, 0, nil, p.options.Images)
+		d, err = ParseDIB(b.info, b.bits, b.usage, logical, p.options.Images)
 	}
 	if err != nil {
 		return p.imageError(b.r, err)
@@ -118,13 +118,14 @@ func (p *player) blit(b blit) error {
 			draw.Image = opaqueImage{im}
 		}
 	case blitTransparent:
-		if b.operation>>24 != 0 {
-			return p.unsupported(b.r, "palette-relative transparent color")
+		key, err := p.color(b.r, b.operation)
+		if err != nil {
+			return err
 		}
 		if err := p.spendPixels(b.r, d.width, d.height); err != nil {
 			return err
 		}
-		draw.Image = colorKeyImage(im, b.operation)
+		draw.Image = colorKeyImage(im, key)
 	}
 	if b.sourceTransform != nil {
 		t := *b.sourceTransform
@@ -267,11 +268,10 @@ func invertImage(im image.Image) *image.NRGBA {
 }
 
 // colorKeyImage implements TransparentBlt: source pixels equal to the key
-// COLORREF are not transferred.
-func colorKeyImage(im image.Image, key uint32) *image.NRGBA {
+// color are not transferred.
+func colorKeyImage(im image.Image, k color.NRGBA) *image.NRGBA {
 	b := im.Bounds()
 	out := image.NewNRGBA(b)
-	k := color.NRGBA{byte(key), byte(key >> 8), byte(key >> 16), 255}
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
 			c := color.NRGBAModel.Convert(im.At(x, y)).(color.NRGBA)

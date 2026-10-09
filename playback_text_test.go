@@ -54,6 +54,19 @@ func (b *fakeText) DrawText(run TextRun, clip Clip) error {
 	return nil
 }
 
+// FillGradient lets fuzzing exercise gradient meshes through fakeText.
+func (b *fakeText) FillGradient(mesh []GradientTriangle, clip Clip) error {
+	b.note(checkClip(clip))
+	for _, tri := range mesh {
+		for _, q := range tri.Points {
+			if !finite(q.X) || !finite(q.Y) {
+				b.note(errors.New("non-finite gradient vertex"))
+			}
+		}
+	}
+	return nil
+}
+
 func playText(t *testing.T, data []byte, o PlayOptions) *fakeText {
 	t.Helper()
 	if o.Destination == (Box{}) {

@@ -34,7 +34,7 @@ type renderScene struct {
 }
 
 func renderScenes() []renderScene {
-	return append(agreementScenes(), divergenceScenes()...)
+	return append(append(append(agreementScenes(), fillScenes()...), wmfFillScenes()...), divergenceScenes()...)
 }
 
 const (
@@ -597,5 +597,121 @@ func TestPlaybackScenes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func gradVertex(x, y int32, c color.NRGBA) []byte {
+	return cat(longs(x, y), words(int16(uint16(c.R)<<8), int16(uint16(c.G)<<8), int16(uint16(c.B)<<8), 0))
+}
+
+func emfRegionRecord(typ uint32, head []int32, rects ...Rect) []byte {
+	var data []byte
+	for _, r := range rects {
+		data = append(data, longs(r.Left, r.Top, r.Right, r.Bottom)...)
+	}
+	u := rects[0]
+	for _, r := range rects {
+		u = Rect{min(u.Left, r.Left), min(u.Top, r.Top), max(u.Right, r.Right), max(u.Bottom, r.Bottom)}
+	}
+	rgn := cat(longs(32, 1, int32(len(rects)), int32(len(data)), u.Left, u.Top, u.Right, u.Bottom), data)
+	b := u
+	h := append([]int32{b.Left, b.Top, b.Right - 1, b.Bottom - 1, int32(len(rgn))}, head...)
+	return emfRecord(typ, cat(longs(h...), rgn))
+}
+
+// monoDIB is a 1-bit top-down DIB of w x h whose set bits are given by on.
+func monoDIB(w, h int, on func(x, y int) bool) (info, bits []byte) {
+	info = append(dibHeader(int32(w), int32(-h), 1, 0), 0, 0, 0, 0, 255, 255, 255, 0)
+	stride := (w + 31) / 32 * 4
+	bits = make([]byte, stride*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if on(x, y) {
+				bits[y*stride+x/8] |= 0x80 >> uint(x%8)
+			}
+		}
+	}
+	return info, bits
+}
+
+func fillScenes() []renderScene {
+	red8, blue8, green8 := color.NRGBA{255, 0, 0, 255}, color.NRGBA{0, 0, 255, 255}, color.NRGBA{0, 160, 0, 255}
+	yellow := color.NRGBA{255, 220, 0, 255}
+	vertical := emfRecord(EMRGradientFill, cat(longs(52, 4, 91, 27, 2, 1, 1), gradVertex(52, 4, cBlack), gradVertex(92, 28, yellow), longs(0, 1), longs(0)))
+	triangle := emfRecord(EMRGradientFill, cat(longs(4, 34, 91, 59, 3, 1, 2), gradVertex(4, 60, red8), gradVertex(48, 34, green8), gradVertex(92, 60, blue8), longs(0, 1, 2)))
+	monoInfo, monoBits := monoDIB(8, 8, func(x, y int) bool { return x >= 4 })
+	mono := emfRecord(EMRCreateMonoBrush, cat(longs(1, 0, 32, int32(len(monoInfo)), int32(32+len(monoInfo)), int32(len(monoBits))), monoInfo, monoBits))
+	palInfo, palBits := palDIB()
+	palBlit := emfStretchDIBits(52, 34, 32, 16, 0, 0, 2, 1, 0x00cc0020, palInfo, palBits)
+	put32(palBlit, 64, 1)
+	region := func(pen ...[]byte) []byte {
+		return emfScene(96, 64, 3, append(pen, emfBrush(1, 0, red), emfBrush(2, 0, green), emfSelect(2),
+			emfRegionRecord(EMRFillRgn, []int32{1}, Rect{4, 4, 36, 16}, Rect{4, 16, 16, 40}),
+			emfRegionRecord(EMRPaintRgn, nil, Rect{20, 44, 80, 60}))...)
+	}
+	return []renderScene{
+		// FillRgn on an L shape and PaintRgn with the selected brush; the
+		// null pen keeps LibreOffice's extra outline (pinned below) away.
+		{name: "fills-region.emf", data: region(emfSelect(nullPen)),
+			probes: []probe{{10, 10, cRed}, {30, 30, cWhite}, {10, 36, cRed}, {4, 30, cRed}, {16, 30, cWhite}, {50, 52, cGreen}, {20, 50, cGreen}, {19, 50, cWhite}}},
+		// Rectangle gradients: RECT_H at pixel x samples t=(x+0.5-4)/40 and
+		// RECT_V at row y samples t=(y+0.5-4)/24; the triangle probes use
+		// barycentric weights of the pixel centers (48.5,36.5), (48.5,59.5).
+		{name: "lo-gradient.emf", divergence: "EMR_GRADIENTFILL draws nothing",
+			data:        emfScene(96, 64, 1, emfRecord(EMRGradientFill, cat(longs(4, 4, 43, 27, 2, 1, 0), gradVertex(4, 4, red8), gradVertex(44, 28, blue8), longs(0, 1), longs(0))), vertical, triangle),
+			probes:      []probe{{4, 16, color.NRGBA{252, 0, 3, 255}}, {24, 16, color.NRGBA{124, 0, 131, 255}}, {72, 5, color.NRGBA{16, 14, 0, 255}}, {72, 26, color.NRGBA{239, 206, 0, 255}}, {48, 36, color.NRGBA{11, 145, 14, 255}}, {48, 59, color.NRGBA{124, 3, 126, 255}}, {2, 2, cWhite}},
+			libreOffice: []probe{{24, 16, cWhite}, {72, 26, cWhite}, {48, 50, cWhite}}},
+		// FrameRgn with a 3 by 2 unit border.
+		{name: "lo-frame-region.emf", divergence: "EMR_FRAMERGN draws nothing",
+			data:        emfScene(96, 64, 2, emfSelect(nullPen), emfBrush(1, 0, blue), emfRegionRecord(EMRFrameRgn, []int32{1, 3, 2}, Rect{44, 4, 88, 40})),
+			probes:      []probe{{44, 20, cBlue}, {46, 20, cBlue}, {47, 20, cWhite}, {66, 5, cBlue}, {66, 6, cWhite}, {66, 38, cBlue}, {66, 37, cWhite}},
+			libreOffice: []probe{{45, 20, cWhite}, {66, 5, cWhite}}},
+		{name: "lo-region-outline.emf", divergence: "FillRgn and PaintRgn also stroke the region outline with the selected pen",
+			data:        region(),
+			probes:      []probe{{4, 30, cRed}, {50, 44, cGreen}},
+			libreOffice: []probe{{4, 30, cBlack}, {50, 44, cBlack}}},
+		// Clear bits take the text color, set bits the background color.
+		{name: "lo-mono-brush.emf", divergence: "monochrome pattern brushes fill with the background color only",
+			data:        emfScene(96, 64, 2, emfSelect(nullPen), mono, emfSelect(1), emfValue(EMRSetTextColor, red), emfValue(EMRSetBkColor, 0x00dcff), emfBox(EMRRectangle, 0, 0, 97, 65)),
+			probes:      []probe{{1, 1, cRed}, {5, 1, yellow}, {9, 30, cRed}, {13, 30, yellow}},
+			libreOffice: []probe{{1, 1, yellow}, {9, 30, yellow}}},
+		// PALETTEINDEX colors and a DIB_PAL_COLORS bitmap read the selected
+		// logical palette.
+		{name: "lo-palette-index.emf", divergence: "PALETTEINDEX colors are drawn black and DIB_PAL_COLORS bitmaps are not drawn",
+			data: emfScene(96, 64, 3, emfSelect(nullPen),
+				emfPalette(1, [4]byte{200, 40, 0, 0}, [4]byte{0, 120, 220, 0}), emfValue(EMRSelectPalette, 1),
+				emfBrush(2, 0, 0x01000000), emfSelect(2), emfBox(EMRRectangle, 4, 4, 44, 28),
+				emfBrush(3, 0, 0x01000001), emfSelect(3), emfBox(EMRRectangle, 52, 4, 92, 28), palBlit),
+			probes:      []probe{{20, 16, color.NRGBA{200, 40, 0, 255}}, {70, 16, color.NRGBA{0, 120, 220, 255}}, {60, 40, color.NRGBA{0, 120, 220, 255}}, {76, 40, color.NRGBA{200, 40, 0, 255}}},
+			libreOffice: []probe{{20, 16, cBlack}, {70, 16, cBlack}, {60, 40, cWhite}, {76, 40, cWhite}}},
+	}
+}
+
+// wmfRegionObject encodes META_CREATEREGION with one rectangle per scan
+// (MS-WMF 2.2.1.5): each scan is [top, bottom, left, right] in logical units.
+func wmfRegionObject(scans ...[4]int16) Record {
+	l, t, r, b := scans[0][2], scans[0][0], scans[0][3], scans[0][1]
+	var body []byte
+	for _, s := range scans {
+		l, t, r, b = min(l, s[2]), min(t, s[0]), max(r, s[3]), max(b, s[1])
+		body = append(body, words(2, s[0], s[1], s[2], s[3], 2)...)
+	}
+	head := cat(words(0, 6), longs(0), words(int16(22+len(body)), int16(len(scans)), 2, l, t, r, b))
+	return testRecord(WMF, MetaCreateRegion, 0, cat(head, body))
+}
+
+func wmfFillScenes() []renderScene {
+	window := []Record{wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96)}
+	l := wmfRegionObject([4]int16{4, 16, 4, 36}, [4]int16{16, 40, 4, 16})
+	return []renderScene{
+		// FillRegion and PaintRegion with region objects, then a clip region.
+		{name: "lo-regions.wmf", divergence: "WMF FillRegion, PaintRegion and SelectClipRegion have no effect",
+			data: wmfScene(96, 64, 7, append(window,
+				wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0),
+				l, wmfBrush(0, red, 0), testRecord(WMF, MetaFillRegion, 0, words(1, 2)),
+				wmfBrush(0, green, 0), wmfRec(MetaSelectObject, 3), wmfRegionObject([4]int16{44, 60, 20, 80}), wmfRec(MetaPaintRegion, 4),
+				wmfRegionObject([4]int16{4, 40, 60, 76}), wmfRec(MetaSelectClipRegion, 5), wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 6), wmfBox(MetaRectangle, 40, 0, 96, 64))...),
+			probes:      []probe{{10, 10, cRed}, {30, 30, cWhite}, {10, 36, cRed}, {50, 52, cGreen}, {68, 20, cBlue}, {58, 20, cWhite}, {80, 20, cWhite}},
+			libreOffice: []probe{{10, 10, cWhite}, {30, 52, cWhite}, {50, 20, cBlue}, {80, 20, cBlue}}},
 	}
 }

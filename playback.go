@@ -255,6 +255,7 @@ type player struct {
 	path         *pathBuilder
 	constructing bool // inside BeginPath/EndPath
 	pixels       uint64
+	regionWork   uint64
 	generations  []uint64
 }
 

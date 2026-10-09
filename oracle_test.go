@@ -187,6 +187,40 @@ func TestPOIOracle(t *testing.T) {
 		}
 		t.Log("documented POI 5.4.1 mismatch: legacy pattern brush misframes the following record; excluded from agreement totals")
 	})
+	t.Run("known-palette-entry-order", func(t *testing.T) {
+		// POI 5.4.1 reads palette entries as flags, blue, green, red in both
+		// formats, following MS-EMF 2.2.18's LogPaletteEntry drawing. MS-WMF
+		// 2.2.2.13 and GDI's PALETTEENTRY order them red, green, blue, flags,
+		// which playback follows. Pin the observed reading; review on change.
+		for name, data := range map[string][]byte{
+			"palette.emf": emfScene(96, 64, 2, emfPalette(1, [4]byte{200, 40, 0, 0})),
+			"palette.wmf": wmfScene(96, 64, 1, testRecord(WMF, MetaCreatePalette, 0, cat(words(0x300, 1), []byte{200, 40, 0, 0}))),
+		} {
+			path := filepath.Join(t.TempDir(), name)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var entry struct {
+				Flags uint8
+				Color int32
+			}
+			for _, r := range poiRecords(t, path) {
+				if (r.Format == "EMF" && r.Type == 49) || (r.Format == "WMF" && r.Type == 0xf7) {
+					var entries []json.RawMessage
+					if err := json.Unmarshal(r.Body["pallete"], &entries); err != nil || len(entries) != 1 {
+						t.Fatal(name, err, string(r.Body["pallete"]))
+					}
+					if err := json.Unmarshal(entries[0], &entry); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if entry.Flags != 200 || uint32(entry.Color)&0xffffff != 0x000028 {
+				t.Fatalf("POI palette reading changed for %s; review the documented order discrepancy: %+v", name, entry)
+			}
+		}
+		t.Log("documented POI 5.4.1 mismatch: palette entries read flags-first; playback uses PALETTEENTRY order")
+	})
 	// A generated path object exercises signed compressed coordinates. POI
 	// 5.4.1 has only a flags-only stub for DrawLines, so that record cannot be
 	// used as a relative-coordinate oracle (covered by spec-derived unit tests).

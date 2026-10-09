@@ -20,6 +20,7 @@ type deviceContext struct {
 	brushOrg, position                             Point
 	clip                                           *ClipRegion
 	meta                                           []*ClipRegion
+	palette                                        paletteRef
 }
 
 func defaultDeviceContext() deviceContext {
@@ -56,10 +57,11 @@ func stockRef(v any) objectRef {
 }
 
 type playObject struct {
-	pen    *gdiPen
-	brush  *gdiBrush
-	font   *gdiFont
-	region bool
+	pen     *gdiPen
+	brush   *gdiBrush
+	font    *gdiFont
+	palette *gdiPalette
+	region  []Rect // WMF region object in logical units; nil if not a region
 }
 
 type gdiPen struct {
@@ -80,6 +82,8 @@ type gdiBrush struct {
 	info, bits, packed  []byte
 	usage               uint32
 	pattern             image.Image
+	mono                *monoPattern // monochrome pattern colored by the DC
+	monoDIB             bool         // EMR_CREATEMONOBRUSH, decoded on first use
 	unsupportedWhy      string
 }
 
@@ -160,7 +164,7 @@ func newPen(v Pen, extended bool) *gdiPen {
 	return g
 }
 
-func newBrush(r Record, v any) *gdiBrush {
+func newBrush(r Record, v any, limits DecodeLimits) *gdiBrush {
 	switch b := v.(type) {
 	case Brush:
 		g := &gdiBrush{style: b.Style, color: b.Color, hatch: b.Hatch}
@@ -173,16 +177,23 @@ func newBrush(r Record, v any) *gdiBrush {
 	case PatternBrush:
 		if r.Type == EMRCreateMonoBrush {
 			// Monochrome brushes take text/background colors from the DC.
-			return &gdiBrush{style: 5, unsupportedWhy: "monochrome pattern brush"}
+			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, monoDIB: true}
 		}
 		return &gdiBrush{style: 5, info: b.Info, bits: b.Bits, usage: b.Usage}
 	case PackedPatternBrush:
 		if b.Style == 3 {
-			return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+			// BS_PATTERN carries a Bitmap16 (MS-WMF 2.3.4.8).
+			bm, err := parseBitmap16(b.Data, limits)
+			if err != nil {
+				return &gdiBrush{style: 3, unsupportedWhy: "malformed Bitmap16 pattern brush"}
+			}
+			m, why := monoFromBitmap16(bm)
+			return &gdiBrush{style: 3, mono: m, unsupportedWhy: why}
 		}
 		return &gdiBrush{style: 5, packed: b.Data, usage: b.Usage}
 	case BitmapPatternBrush:
-		return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+		m, why := monoFromBitmap16(b.Bitmap)
+		return &gdiBrush{style: 3, mono: m, unsupportedWhy: why}
 	}
 	return nil
 }
@@ -288,22 +299,35 @@ func (p *player) revalidate() {
 	if !live(p.dc.font) {
 		p.dc.font = stockRef(stockFonts[systemFont])
 	}
+	if s := p.dc.palette; s.selected && (uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation) {
+		p.dc.palette = paletteRef{}
+	}
 }
 
-func (p *player) create(r Record, id uint32, body any) {
+func (p *player) create(r Record, id uint32, body any) error {
 	var o playObject
 	switch v := body.(type) {
 	case Pen:
 		o.pen = newPen(v, r.Format == EMF && r.Type == EMRExtCreatePen)
 	case Brush, PatternBrush, PackedPatternBrush, BitmapPatternBrush:
-		o.brush = newBrush(r, v)
+		o.brush = newBrush(r, v, p.options.Stream.Decoding)
 	case Font:
 		o.font = newFont(v, r.Format)
+	case Palette:
+		entries, err := p.readEntries(r, v.Entries, v.Count)
+		if err != nil {
+			return err
+		}
+		o.palette = &gdiPalette{entries: entries}
 	case WMFRegion:
-		o.region = true
+		o.region = wmfRegionRects(v)
+		if o.region == nil {
+			o.region = []Rect{}
+		}
 	}
 	// Stream has checked the handle against the table size.
 	p.objects[id] = o
+	return nil
 }
 
 func (p *player) selectObject(r Record, id uint32) error {
@@ -332,9 +356,9 @@ func (p *player) selectObject(r Record, id uint32) error {
 		p.dc.brush = ref
 	case o.font != nil:
 		p.dc.font = ref
-	case o.region:
-		// Selecting a WMF region sets the clipping region.
-		return p.unsupported(r, "WMF region clipping")
+	case o.region != nil:
+		// Selecting a WMF region replaces the clipping region.
+		return p.selectRegionClip(r, o.region)
 	}
 	return nil
 }
@@ -396,6 +420,18 @@ func (p *player) setMetaRegion() {
 	copy(meta, p.dc.meta)
 	p.dc.meta = append(meta, p.dc.clip)
 	p.dc.clip = nil
+}
+
+func (p *player) selectRegionClip(r Record, rects []Rect) error {
+	m, err := p.toDestination(r)
+	if err != nil {
+		return err
+	}
+	path, ok := rectsPath(rects, m, p.options.MaxPathPoints)
+	if !ok {
+		return failure(r.Offset, "clip region points", ErrLimit)
+	}
+	return p.combineClip(r, ClipReplace, path, NonZero)
 }
 
 func (p *player) currentClip() Clip {

@@ -63,3 +63,22 @@ func TestNeighborhoodComparisonRejectsDisplacement(t *testing.T) {
 		t.Fatal("comparison missed a three-pixel displacement")
 	}
 }
+
+func TestGouraudInterpolatesLinearly(t *testing.T) {
+	// Two triangles forming a horizontal gradient from black to white over
+	// [0,64): pixel x takes (x+0.5)/64 of white, with no seam on the diagonal.
+	c := New(64, 8)
+	black, white := color.NRGBA64{0, 0, 0, 0xffff}, color.NRGBA64{0xff00, 0xff00, 0xff00, 0xffff}
+	mesh := []Triangle{{[3]Point{{0, 0}, {64, 0}, {64, 8}}, [3]color.NRGBA64{black, white, white}}, {[3]Point{{0, 0}, {64, 8}, {0, 8}}, [3]color.NRGBA64{black, white, black}}}
+	if err := c.FillGouraud(mesh, nil); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 64; x++ {
+			want := (float64(x) + .5) / 64 * 255
+			if got := float64(c.Image.NRGBAAt(x, y).R); math.Abs(got-want) > 1 {
+				t.Fatalf("(%d,%d) = %v, want %.1f", x, y, got, want)
+			}
+		}
+	}
+}

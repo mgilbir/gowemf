@@ -97,3 +97,14 @@ func compareNeighborhood(a, b image.Image, delta uint32, radius int, maxBadFract
 func neighborhoodMismatch(a, b image.Image, delta uint32, radius int) (int, int, error) {
 	return raster.NeighborhoodMismatch(a, b, delta, radius)
 }
+
+func (rb *rasterBackend) FillGradient(mesh []GradientTriangle, clip Clip) error {
+	out := make([]raster.Triangle, len(mesh))
+	for i, t := range mesh {
+		for k := 0; k < 3; k++ {
+			out[i].P[k] = raster.Point(t.Points[k])
+			out[i].C[k] = t.Colors[k]
+		}
+	}
+	return rb.c.FillGouraud(out, rb.clip(clip))
+}

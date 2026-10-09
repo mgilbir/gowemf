@@ -1,0 +1,393 @@
+package gowemf
+
+import (
+	"image"
+	"math"
+)
+
+// deviceContext is the saved/restored playback state of MS-EMF 3.1.1.2 and
+// MS-WMF 3.1.5. Clip nodes and object references are immutable or shared, so
+// a value copy is a complete SaveDC snapshot.
+type deviceContext struct {
+	mapMode                                        uint32
+	windowOrg, windowExt, viewportOrg, viewportExt Point
+	world                                          Matrix
+	pen, brush                                     objectRef
+	bkMode, polyFill, rop2, stretchMode, arcDir    uint32
+	layout, bkColor                                uint32
+	miterLimit                                     float64
+	brushOrg, position                             Point
+	clip                                           *ClipRegion
+	meta                                           []*ClipRegion
+}
+
+func defaultDeviceContext() deviceContext {
+	return deviceContext{
+		mapMode: 1, windowExt: Point{1, 1}, viewportExt: Point{1, 1}, world: Identity(),
+		pen: stockRef(stockPen(0x00000000, false)), brush: stockRef(stockBrush(0, 0x00ffffff)),
+		bkMode: 2, polyFill: 1, rop2: 13, stretchMode: 1, arcDir: 1, bkColor: 0x00ffffff, miterLimit: 10,
+	}
+}
+
+// objectRef is a selection. Slot-backed references remember the generation of
+// the object they selected so deleted or reused slots fall back to the stock
+// default (MS-EMF 3.1.1.1) instead of silently changing a restored selection.
+type objectRef struct {
+	slot       uint32
+	generation uint64
+	stock      bool
+	pen        *gdiPen
+	brush      *gdiBrush
+}
+
+func stockRef(v any) objectRef {
+	r := objectRef{stock: true}
+	switch o := v.(type) {
+	case *gdiPen:
+		r.pen = o
+	case *gdiBrush:
+		r.brush = o
+	}
+	return r
+}
+
+type playObject struct {
+	pen    *gdiPen
+	brush  *gdiBrush
+	region bool
+}
+
+type gdiPen struct {
+	null           bool
+	style          uint32 // PS_* line style (low nibble)
+	geometric      bool
+	width          float64 // logical units; zero for cosmetic pens
+	color          uint32
+	cap            LineCap
+	join           LineJoin
+	dashes         []float64
+	brush          *gdiBrush // non-nil for extended pens with non-solid brushes
+	unsupportedWhy string
+}
+
+type gdiBrush struct {
+	style, color, hatch uint32
+	info, bits, packed  []byte
+	usage               uint32
+	pattern             image.Image
+	unsupportedWhy      string
+}
+
+func stockPen(color uint32, null bool) *gdiPen {
+	return &gdiPen{null: null, color: color, cap: CapRound, join: JoinRound}
+}
+func stockBrush(style, color uint32) *gdiBrush { return &gdiBrush{style: style, color: color} }
+
+var (
+	stockBrushes = [...]*gdiBrush{stockBrush(0, 0xffffff), stockBrush(0, 0xc0c0c0), stockBrush(0, 0x808080), stockBrush(0, 0x404040), stockBrush(0, 0), stockBrush(1, 0)}
+	stockPens    = [...]*gdiPen{stockPen(0xffffff, false), stockPen(0, false), stockPen(0, true)}
+)
+
+func newPen(v Pen, extended bool) *gdiPen {
+	g := &gdiPen{style: v.Style & 15, color: v.Color, cap: CapRound, join: JoinRound}
+	if g.style == 5 {
+		g.null = true
+		return g
+	}
+	// PenStyle carries end cap and join bits for every pen record kind
+	// (MS-WMF 2.1.1.23, MS-EMF 2.1.25).
+	switch v.Style & 0xf00 {
+	case 0:
+	case 0x100:
+		g.cap = CapSquare
+	case 0x200:
+		g.cap = CapFlat
+	default:
+		g.unsupportedWhy = "pen end cap"
+	}
+	switch v.Style & 0xf000 {
+	case 0:
+	case 0x1000:
+		g.join = JoinBevel
+	case 0x2000:
+		g.join = JoinMiter
+	default:
+		g.unsupportedWhy = "pen line join"
+	}
+	if v.Style&^0x1ffff != 0 || v.Style&0xf0 != 0 {
+		g.unsupportedWhy = "pen style flags"
+	}
+	if extended {
+		g.geometric = v.Style&0x10000 != 0
+		if g.geometric {
+			g.width = v.Width
+		}
+		switch v.BrushStyle {
+		case 0:
+		case 1:
+			g.null = true
+		case 2:
+			g.brush = &gdiBrush{style: 2, color: v.Color, hatch: v.Hatch}
+		default:
+			g.unsupportedWhy = "pattern pen brush"
+		}
+		for i := 0; i < v.Dashes.Len(); i++ {
+			g.dashes = append(g.dashes, float64(v.Dashes.At(i)))
+		}
+		if g.style == 7 && len(g.dashes) == 0 {
+			g.unsupportedWhy = "empty user pen style"
+		}
+	} else {
+		// MS-WMF 3.1.4.2: a zero-width pen is one pixel wide at every scale.
+		// LogPen widths are geometric with round caps and joins.
+		w := math.Abs(v.Width)
+		if w > 0 {
+			g.geometric = true
+			g.width = w
+		}
+	}
+	if g.style > 8 {
+		g.unsupportedWhy = "pen line style"
+	}
+	if g.style == 8 && g.geometric {
+		g.unsupportedWhy = "PS_ALTERNATE geometric pen"
+	}
+	return g
+}
+
+func newBrush(r Record, v any) *gdiBrush {
+	switch b := v.(type) {
+	case Brush:
+		g := &gdiBrush{style: b.Style, color: b.Color, hatch: b.Hatch}
+		switch b.Style {
+		case 0, 1, 2:
+		default:
+			g.unsupportedWhy = "brush style"
+		}
+		return g
+	case PatternBrush:
+		if r.Type == EMRCreateMonoBrush {
+			// Monochrome brushes take text/background colors from the DC.
+			return &gdiBrush{style: 5, unsupportedWhy: "monochrome pattern brush"}
+		}
+		return &gdiBrush{style: 5, info: b.Info, bits: b.Bits, usage: b.Usage}
+	case PackedPatternBrush:
+		if b.Style == 3 {
+			return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+		}
+		return &gdiBrush{style: 5, packed: b.Data, usage: b.Usage}
+	case BitmapPatternBrush:
+		return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+	}
+	return nil
+}
+
+// pageMatrix maps page (logical, after world transform) to device units.
+func (dc *deviceContext) pageMatrix() Matrix {
+	sx, sy := dc.viewportExt.X/dc.windowExt.X, dc.viewportExt.Y/dc.windowExt.Y
+	return Matrix{M11: sx, M22: sy, Dx: dc.viewportOrg.X - dc.windowOrg.X*sx, Dy: dc.viewportOrg.Y - dc.windowOrg.Y*sy}
+}
+
+// toDestination maps logical coordinates to destination coordinates.
+func (p *player) toDestination(r Record) (Matrix, error) {
+	m := p.dc.world.Then(p.dc.pageMatrix()).Then(p.base)
+	if !m.Finite() {
+		return Matrix{}, malformed(r.Offset, "non-finite playback transform")
+	}
+	return m, nil
+}
+
+// advanced reports whether GM_ADVANCED semantics are in effect. EMF records
+// no graphics mode; a non-identity world transform implies GM_ADVANCED
+// because GDI only records world transforms in that mode. WMF is always
+// GM_COMPATIBLE.
+func (p *player) advanced() bool { return p.dc.world != Identity() }
+
+var fixedUnitsPerMM = [...]float64{2: 10, 3: 100, 4: 100 / 25.4, 5: 1000 / 25.4, 6: 1440 / 25.4}
+
+// setMapMode follows MS-WMF 2.1.1.16. Invalid modes are ignored, as the GDI
+// call they record would fail.
+func (p *player) setMapMode(mode uint32) {
+	dc := &p.dc
+	switch {
+	case mode == 1:
+		dc.windowExt, dc.viewportExt = Point{1, 1}, Point{1, 1}
+	case mode >= 2 && mode <= 6:
+		u := fixedUnitsPerMM[mode]
+		dc.windowExt = Point{u, u}
+		dc.viewportExt = Point{1 / p.pixelMM.X, -1 / p.pixelMM.Y}
+	case mode == 7 || mode == 8:
+		// Extents are retained when switching to a scalable mode.
+	default:
+		return
+	}
+	dc.mapMode = mode
+	p.isotropic()
+}
+
+// isotropic adjusts the viewport so one logical unit has the same physical
+// size on both axes, keeping the smaller scale (MS-WMF 2.1.1.16).
+func (p *player) isotropic() {
+	dc := &p.dc
+	if dc.mapMode != 7 {
+		return
+	}
+	xs := math.Abs(dc.viewportExt.X/dc.windowExt.X) * p.pixelMM.X
+	ys := math.Abs(dc.viewportExt.Y/dc.windowExt.Y) * p.pixelMM.Y
+	if xs > ys {
+		dc.viewportExt.X = math.Copysign(math.Abs(dc.windowExt.X)*ys/p.pixelMM.X, dc.viewportExt.X)
+	} else if ys > xs {
+		dc.viewportExt.Y = math.Copysign(math.Abs(dc.windowExt.Y)*xs/p.pixelMM.Y, dc.viewportExt.Y)
+	}
+}
+
+// setExtent applies Set*Ext and Scale*Ext. Extents only change in scalable
+// mapping modes, and zero extents are ignored, as GDI rejects those calls.
+func (p *player) setExtent(window bool, v Point) {
+	if p.dc.mapMode != 7 && p.dc.mapMode != 8 || v.X == 0 || v.Y == 0 || !finite(v.X) || !finite(v.Y) {
+		return
+	}
+	if window {
+		p.dc.windowExt = v
+	} else {
+		p.dc.viewportExt = v
+	}
+	p.isotropic()
+}
+
+func (p *player) restore(n int32) {
+	var level int
+	if n < 0 {
+		level = len(p.saved) + int(n)
+	} else {
+		level = int(n) - 1
+	}
+	// Stream has already validated the level against its own saved count.
+	p.dc = p.saved[level]
+	p.saved = p.saved[:level]
+	p.dc.pen = p.valid(p.dc.pen, true)
+	p.dc.brush = p.valid(p.dc.brush, false)
+}
+
+func (p *player) valid(r objectRef, pen bool) objectRef {
+	if r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation {
+		return r
+	}
+	if pen {
+		return stockRef(stockPens[1])
+	}
+	return stockRef(stockBrushes[0])
+}
+
+func (p *player) create(r Record, id uint32, body any) {
+	var o playObject
+	switch v := body.(type) {
+	case Pen:
+		o.pen = newPen(v, r.Format == EMF && r.Type == EMRExtCreatePen)
+	case Brush, PatternBrush, PackedPatternBrush, BitmapPatternBrush:
+		o.brush = newBrush(r, v)
+	case WMFRegion:
+		o.region = true
+	}
+	// Stream has checked the handle against the table size.
+	p.objects[id] = o
+}
+
+func (p *player) selectObject(r Record, id uint32) error {
+	if id&0x80000000 != 0 && p.format == EMF {
+		n := id & 0x7fffffff
+		switch {
+		case n <= 5:
+			p.dc.brush = stockRef(stockBrushes[n])
+		case n >= 6 && n <= 8:
+			p.dc.pen = stockRef(stockPens[n-6])
+		case n == 18:
+			p.dc.brush = stockRef(stockBrushes[0]) // DC_BRUSH defaults to white
+		case n == 19:
+			p.dc.pen = stockRef(stockPens[1]) // DC_PEN defaults to black
+		}
+		return nil
+	}
+	o := p.objects[id]
+	ref := objectRef{slot: id, generation: p.generations[id], pen: o.pen, brush: o.brush}
+	switch {
+	case o.pen != nil:
+		p.dc.pen = ref
+	case o.brush != nil:
+		p.dc.brush = ref
+	case o.region:
+		// Selecting a WMF region sets the clipping region.
+		return p.unsupported(r, "WMF region clipping")
+	}
+	return nil
+}
+
+func (p *player) deleteObject(id uint32) {
+	p.objects[id] = playObject{}
+	p.generations[id]++
+	p.dc.pen = p.valid(p.dc.pen, true)
+	p.dc.brush = p.valid(p.dc.brush, false)
+}
+
+// clip combines area with the current clipping region.
+func (p *player) combineClip(r Record, op ClipOp, area Path, rule FillRule) error {
+	base := p.dc.clip
+	if op == ClipReplace {
+		base = nil
+	}
+	var depth uint32
+	if base != nil {
+		depth = base.depth
+	}
+	if uint64(depth)+p.metaSteps() >= uint64(p.options.MaxClipSteps) {
+		return failure(r.Offset, "clip region steps", ErrLimit)
+	}
+	p.dc.clip = &ClipRegion{Base: base, Op: op, Area: area, Rule: rule, depth: depth + 1}
+	return nil
+}
+
+func (p *player) metaSteps() uint64 {
+	var n uint64
+	for _, m := range p.dc.meta {
+		n += uint64(m.depth)
+	}
+	return n
+}
+
+func (p *player) offsetClip(r Record, v Point) error {
+	if p.dc.clip == nil {
+		return nil
+	}
+	m, err := p.toDestination(r)
+	if err != nil {
+		return err
+	}
+	o := Matrix{M11: m.M11, M12: m.M12, M21: m.M21, M22: m.M22}.Apply(v)
+	if uint64(p.dc.clip.depth)+p.metaSteps() >= uint64(p.options.MaxClipSteps) {
+		return failure(r.Offset, "clip region steps", ErrLimit)
+	}
+	p.dc.clip = &ClipRegion{Base: p.dc.clip, Op: ClipOffset, Offset: o, depth: p.dc.clip.depth + 1}
+	return nil
+}
+
+// setMetaRegion intersects the metaregion with the clipping region and resets
+// the clipping region (MS-EMF 2.3.2).
+func (p *player) setMetaRegion() {
+	if p.dc.clip == nil {
+		return
+	}
+	meta := make([]*ClipRegion, len(p.dc.meta), len(p.dc.meta)+1)
+	copy(meta, p.dc.meta)
+	p.dc.meta = append(meta, p.dc.clip)
+	p.dc.clip = nil
+}
+
+func (p *player) currentClip() Clip {
+	if p.dc.clip == nil {
+		return Clip(p.dc.meta[:len(p.dc.meta):len(p.dc.meta)])
+	}
+	c := make(Clip, len(p.dc.meta)+1)
+	copy(c, p.dc.meta)
+	c[len(p.dc.meta)] = p.dc.clip
+	return c
+}

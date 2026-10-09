@@ -6,9 +6,11 @@ The sole external Go dependency is [golittlecms](https://github.com/mgilbir/goli
 for color management; no cgo or native runtime is needed.
 
 Supports WMF, EMF, and EMF+ containers, typed record decoding, renderer-facing
-command streaming, object/state checks, and bitmap decoding. Vector playback and
-text shaping belong to the consuming renderer. The supported record/encoding
-inventory and outstanding format coverage are explicit in [COVERAGE.md](COVERAGE.md).
+command streaming, object/state checks, bitmap decoding, and GDI playback of
+paths, transforms, clipping and bitmaps through a small backend interface.
+Rasterization, text shaping and EMF+ drawing belong to the consuming renderer.
+The supported record/encoding inventory and outstanding format coverage are
+explicit in [COVERAGE.md](COVERAGE.md).
 
 ## Current coverage
 
@@ -77,6 +79,42 @@ and returns owned bytes. It does not replace the WMF fallback automatically.
 Named wire identifiers (`MetaStretchDIB`, `EMRPolygon`, `PlusDrawStringRecord`,
 and others in `record_types.go`) avoid hard-coded opcode values. Naming a record
 does not imply support for every encoding or extension it can contain.
+
+### GDI playback
+
+```go
+var missing []gowemf.UnsupportedOperation
+_, err := gowemf.Play(data, gowemf.PlayOptions{
+    Destination: gowemf.Box{Width: 800, Height: 600},
+    Unsupported: func(u gowemf.UnsupportedOperation) error {
+        missing = append(missing, u) // or return an error to stop
+        return nil
+    },
+}, backend) // FillPath, StrokePath and DrawImage
+```
+
+`Play` replays the GDI stream of a WMF or EMF file. It keeps the playback device
+context: SaveDC/RestoreDC, selected pens and brushes with stock objects and
+object-slot reuse, all eight mapping modes, window/viewport origins and extents,
+world transforms, background/fill/ROP2/stretch modes, arc direction, brush
+origin, current position, EMF path brackets, clipping and metaregions. Backends
+receive geometry already in destination coordinates: paths of moves, lines,
+cubic Béziers and closures with a fill rule; effective paints (solid, hatch or
+pattern, after ROP2 and background mode); effective pens with caps, joins,
+dashes and a pen-space transform; images with an affine placement, source
+rectangle and opacity; and an immutable clip chain of path areas combined with
+intersect/union/xor/difference/replace/offset steps.
+
+The EMF header frame, or the WMF placeable bounds, is mapped onto `Destination`.
+WMF files without a placeable header need `PlayOptions.Placeable`. EMF+ files
+play only their GDI fallback, and only when `Stream.PreferGDI` is set: EMF+
+drawing is not implemented. Text output, region painting, gradients, flood
+fill, palette-relative colors, destination-dependent raster operations and
+other omissions are never skipped silently. Without an `Unsupported` callback
+`Play` stops with `ErrUnsupported`; with one, every skipped operation is reported
+so a partial picture cannot be mistaken for a complete one. COVERAGE.md lists
+the playback inventory and the interpretations chosen where the specifications
+leave room; ORACLES.md records how the output was checked against LibreOffice.
 
 Serializable image-effect records decode all eleven standard effect parameter
 blocks. `Stream` requires a prior effect for effect-enabled `DrawImagePoints`
@@ -159,6 +197,10 @@ Zero-valued limits select finite defaults:
   storage accounting. Pens, caps, brushes, paths and images share the enclosing
   decoded-allocation budget rather than resetting it for each nested object.
 - Command stream: 65,536 object slots and 1,024 saved states.
+- Playback: 4,000,000 points per path, 64,000,000 cumulative decoded bitmap
+  pixels per `Play` call and 4,096 clip steps across the clip and metaregions.
+  Arc construction is bounded per record; backends retaining paths or clip
+  masks own that memory.
 - Bitmap decoding: 16 MiB encoded input and 16,000,000 output pixels. Returned
   images and codec temporary storage are additional to the input buffer.
 - TIFF/effect decoded storage: 128 MiB by default; TIFF byte products are checked
@@ -180,12 +222,12 @@ acquisition; `Walk` cannot undo allocation performed before it is called.
 
 ```sh
 make check          # format, build, tests, vet, race, 32-bit tests
-make fuzz           # six 30-second fuzz targets, two workers each
+make fuzz           # seven 30-second fuzz targets, two workers each
 make bench          # generated-input microbenchmarks with allocation counts
 make corpus-download
 make test-external  # fetch/verify pinned inputs, then run corpus assertions
 make test-oracle    # download pinned POI jars; requires java and javac
-make test-render    # LibreOffice + POI raster comparisons; requires Liberation Sans and prlimit
+make test-render    # LibreOffice/POI raster and GDI playback comparisons; requires Liberation Sans and prlimit
 go run ./cmd/gowemfdump -summary file.emf
 go run ./cmd/gowemfdump -offset 128 file.emf
 ```
@@ -233,8 +275,9 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-the typed command stream to spine's renderer; extend the current Linux raster
-comparisons to vector/text playback and, when available, Windows GDI/GDI+. Windows remains the
-primary playback oracle. No pixel-perfect or full-format rendering claim is made
-by parser/corpus success. Fonts and metrics must be controlled for meaningful
-cross-renderer comparisons.
+`Play` to spine's renderer; add text, region painting, gradients and EMF+ drawing
+to playback; and compare against Windows GDI/GDI+ when available. Windows remains
+the primary playback oracle. LibreOffice agreement covers the generated scenes in
+ORACLES.md and diverges from the specifications in several pinned cases. No
+pixel-perfect or full-format rendering claim is made. Fonts and metrics must be
+controlled for meaningful cross-renderer text comparisons.

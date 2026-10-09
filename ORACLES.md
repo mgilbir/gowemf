@@ -132,18 +132,98 @@ result is not cropped after rendering. Exact 96-dpi EMF device metrics avoid a
 rounded-millimeter scaling error in the fixture. Liberation Sans availability is
 checked and the tool/font versions are recorded in `.external/render/run-*/`.
 
-Comparisons include every pixel, with a 3/255 per-channel threshold and a maximum
-1% mismatch fraction. Changed-row tests prove that the metric rejects meaningful
-defects. These tests compare library-decoded raster output and one-to-one transfer
-geometry, not a full vector/text playback backend. Generated EMF and TIFF samples
-match LibreOffice for uncompressed, PackBits, Deflate and early-change LZW data.
-The LZW render sample crosses code-width changes and resets its dictionary.
+Raster-transfer comparisons include every pixel, with a 3/255 per-channel
+threshold and a maximum 1% mismatch fraction. Changed-row tests prove that the
+metric rejects meaningful defects. Generated EMF and TIFF samples match
+LibreOffice for uncompressed, PackBits, Deflate and early-change LZW data. The
+LZW render sample crosses code-width changes and resets its dictionary. The EMF
+and WMF bitmap fixtures must also come out of `Play` pixel-identical to the
+direct decode.
 
-LibreOffice **24.2.7.2** imports the generated WMF DIB transfer as a blank graphic.
-An execution-only POI raster adapter matches the library/spec-derived pixels
-exactly. The known blank LibreOffice result is asserted separately, tied to that
-version, and excluded from agreement claims. Unexpected differences on another
-version fail the test instead of increasing tolerance or silently skipping WMF.
+LibreOffice **24.2.7.2** renders a WMF whose META_HEADER type is DISKMETAFILE (2)
+blank; the same file with MEMORYMETAFILE (1) renders. MS-WMF 2.3.2.2 allows both.
+The generated DISKMETAFILE bitmap fixture therefore keeps its pinned blank result
+and exact POI agreement, and `bitmap-memory.wmf` checks LibreOffice agreement.
+Generated WMF playback scenes use MEMORYMETAFILE.
+
+### GDI playback scenes
+
+`Play` output is rasterized by a test-only reference backend written separately
+from the playback code: it flattens its own curves, strokes in pen space, takes
+coverage on 16 sub-scanlines with exact horizontal spans, and composites in sRGB
+onto white like the LibreOffice export. Its coverage, stroke-width and comparison
+metric each have generated tests. It centers lines on device pixels using
+`Stroke.PixelCenter`.
+
+There are eight 96x64 agreement scenes. Four EMF scenes combine the requested
+features: nested save/restore with set, left- and right-multiplied and reset
+world transforms; anisotropic mappings with each and both axes reflected, an arc
+in reflected space, MM_LOMETRIC, inherited fixed extents and a pen scaled by the
+mapping; pen/brush selection, stock objects, deleted and reused slots, geometric
+pens and restored selections; and clipped paths and bitmap transfers with
+rectangle, path and region clipping, union, difference, offset and save/restore.
+Two EMF scenes cover path brackets (alternate fill, Bézier/arc construction,
+closure, stroke-and-fill, a clockwise pie) and bitmap placement (full, mirrored,
+partial-width and partial-height sources, BitBlt, NOTSRCCOPY, PATCOPY, constant
+and per-pixel alpha). Two WMF scenes cover the placeable mapping, reflected
+windows with SaveDC, lowest-free-slot reuse, geometric and hairline pens, and
+clipped DIB transfers.
+
+Comparison is symmetric: each channel of every pixel must lie within 40/255 of
+the range spanned by the other image's 3x3 neighborhood, with at most 0.5% of
+pixels failing in either direction. This tolerates half-pixel edge placement,
+LibreOffice's bilinear bitmap smoothing at 2x and differing anti-aliasing ramps,
+but not displaced, missing or recolored content; a generated three-pixel
+displacement test proves that. Observed worst cases are 0–17 of 6,144 pixels.
+Every scene also carries hand-computed probe pixels derived from the
+specifications, checked offline by `make check`.
+
+Seventeen planted playback defects were each detected by both the offline probes
+and the LibreOffice comparison before being restored: swapped world-transform
+multiplication order, an off-by-one RestoreDC level, unsigned extents, an
+uninverted fixed-mode y axis, ignored clip paths, difference treated as
+intersection, clip not saved, a stale reused object slot, ignored stock objects,
+ignored destination mirroring, a wrong partial-source origin, a lower-left
+StretchDIBits origin, ignored arc direction and
+fill rule, removed compatible-mode edge exclusion, unscaled pen widths and
+ignored constant alpha. Nineteen further planted defects were caught by the
+playback unit tests (dash aliasing, ROP2 inversion, pattern reuse, clip offset
+scaling, advanced-mode edges, inside-frame pens, PolyDraw closure, AngleArc
+direction, dithered hatches, metaregion budget, transparent key order, source
+origins, caller bounds, HALFTONE, silent text omission, isotropic adjustment,
+PlgBlt corners, device-source transfers reported as malformed and ignored LogPen
+cap/join bits).
+
+### Pinned LibreOffice divergences
+
+Each divergence has its own generated scene. Probes assert the result the
+specification requires from `Play` and the pixels LibreOffice 24.2.7.2 was
+observed to draw; if LibreOffice changes, the test fails for review.
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-isotropic.emf` | MM_ISOTROPIC viewport left anisotropic | Adjusted to square units (MS-WMF 2.1.1.16) |
+| `lo-compatible-arc.emf` | EMF arc direction applied in logical space under a one-axis reflection | Unreflected device-space direction (MS-EMF 2.1.16); LibreOffice's WMF import agrees with playback |
+| `lo-createpen-width.emf` | EMR_CREATEPEN width drawn as a hairline | Logical width (see COVERAGE.md) |
+| `lo-world-pen.emf` | Geometric pen not transformed by an anisotropic world transform | Pen follows the world transform under GM_ADVANCED |
+| `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
+| `lo-restore-reused.emf` | RestoreDC reselects a deleted pen by value | Default pen |
+| `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
+| `lo-exclude-clip.emf` | ExcludeClipRect ignored | Rectangle excluded |
+| `lo-region-copy.emf` | ExtSelectClipRgn RGN_COPY ignored | Region replaces the clip |
+| `lo-region-and.emf` | RGN_AND combined like RGN_XOR | Intersection |
+| `lo-metaregion.emf` | SetMetaRgn does not constrain later clipping | Clip intersected with the metaregion (MS-EMF 2.3.2) |
+| `lo-rotated-bitmap.emf` | World-rotated StretchDIBits drawn unrotated in an axis-aligned box | Affine placement |
+| `lo-wmf-no-window.wmf` | WMF without window records scaled to its drawn content | Placeable bounds as the window (MS-WMF 3.1.3) |
+| `lo-setdibits.emf` | EMR_SETDIBITSTODEVICE draws nothing | 1:1 device pixels, lower-left source origin |
+| `lo-transparentblt.emf` | EMR_TRANSPARENTBLT draws nothing | Color-keyed transfer |
+
+LibreOffice agrees with playback for the WMF arc direction, RGN_OR and RGN_DIFF
+region clipping, OffsetClipRgn, clip paths, ExtCreatePen widths under
+anisotropic page mappings, StretchDIBits upper-left partial sources, AlphaBlend
+and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
+device patterns differently, and the test backend does not implement them.
+Dashes are likewise left to backends and not compared.
 
 Generated inputs, PNGs, wrapper documents and environment information remain
 ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.

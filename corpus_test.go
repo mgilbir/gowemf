@@ -107,6 +107,25 @@ func TestExternalCorpus(t *testing.T) {
 			}); err != nil {
 				t.Fatal("native stream:", err)
 			}
+			// GDI playback must finish with every omission reported and the
+			// backend geometry contract intact.
+			skipped := make(map[string]int)
+			backend := &recordingBackend{}
+			options := PlayOptions{Destination: Box{Width: 256, Height: 256}, Unsupported: func(u UnsupportedOperation) error {
+				skipped[u.Reason]++
+				return nil
+			}}
+			options.Stream.PreferGDI = h.EMFPlus != nil
+			if _, err := Play(b, options, backend); err != nil {
+				t.Fatal("playback:", err)
+			}
+			if backend.bad != nil {
+				t.Fatal("playback geometry:", backend.bad)
+			}
+			t.Logf("playback: %d fills, %d strokes, %d images; unsupported: %v", len(backend.fills), len(backend.strokes), len(backend.images), skipped)
+			if len(backend.fills)+len(backend.strokes)+len(backend.images) == 0 {
+				t.Fatal("playback produced no drawing operations")
+			}
 		})
 	}
 }

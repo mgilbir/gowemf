@@ -1,10 +1,13 @@
 // Command codepagegen writes codepage_tables.go from the pinned Windows
 // best-fit files in .external/codepages (make codepages). It accepts only
-// complete single-byte MBTABLEs whose ASCII half is the identity.
+// complete single-byte MBTABLEs whose ASCII half is the identity, and
+// double-byte files whose every byte is a single-byte character or a lead
+// byte.
 package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"go/format"
@@ -57,6 +60,47 @@ func generate(dir string) ([]byte, error) {
 		if !strings.HasSuffix(f.Path, fmt.Sprintf("%d.txt", t.CodePage)) {
 			return nil, fmt.Errorf("%s declares code page %d", f.Path, t.CodePage)
 		}
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("// dbcsCodePages holds the double-byte ANSI code pages. Bytes that are not\n")
+	b.WriteString("// lead bytes map through single; pairs holds the base64 of the trail\n")
+	b.WriteString("// mappings of every lead byte, encoded as internal/codepage.EncodePairs\n")
+	b.WriteString("// describes.\n")
+	b.WriteString("var dbcsCodePages = map[uint16]*dbcsCodePage{\n")
+	for _, f := range corpus.DBCSCodePages {
+		data, err := os.ReadFile(filepath.Join(dir, f.Path))
+		if err != nil {
+			return nil, err
+		}
+		d, err := codepage.ParseDBCS(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f.Path, err)
+		}
+		if !strings.HasSuffix(f.Path, fmt.Sprintf("%d.txt", d.CodePage)) {
+			return nil, fmt.Errorf("%s declares code page %d", f.Path, d.CodePage)
+		}
+		fmt.Fprintf(&b, "\t%d: {\n\t\tdefaultChar: 0x%04x,\n\t\tleads: [][2]byte{", d.CodePage, d.DefaultChar)
+		for _, r := range d.Leads {
+			fmt.Fprintf(&b, "{0x%02x, 0x%02x}, ", r[0], r[1])
+		}
+		b.WriteString("},\n\t\tsingle: [256]uint16{")
+		for i := 0; i < 256; i++ {
+			if i%8 == 0 {
+				b.WriteString("\n\t\t\t")
+			}
+			fmt.Fprintf(&b, "0x%04x, ", d.Single[byte(i)])
+		}
+		b.WriteString("\n\t\t},\n\t\tpairs: \"\" +")
+		enc := base64.StdEncoding.EncodeToString(codepage.EncodePairs(d))
+		for len(enc) > 0 {
+			n := min(len(enc), 96)
+			fmt.Fprintf(&b, "\n\t\t\t%q", enc[:n])
+			enc = enc[n:]
+			if len(enc) > 0 {
+				b.WriteString(" +")
+			}
+		}
+		b.WriteString(",\n\t},\n")
 	}
 	b.WriteString("}\n")
 	return format.Source(b.Bytes())

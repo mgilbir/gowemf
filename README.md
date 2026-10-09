@@ -148,7 +148,7 @@ indexes with a text-space transform; font realization, shaping, underline and
 strikeout are the backend's. ANSI strings are decoded with the Windows code
 pages that MS-UCODEREF names; text in the system-dependent DEFAULT_CHARSET is
 reported unless `PlayOptions.DefaultCharSet` states what the producing system
-used, and double-byte and OEM character sets are reported. Without an `Unsupported` callback
+used, and OEM, Mac and JOHAB character sets are reported. Without an `Unsupported` callback
 `Play` stops with `ErrUnsupported`; with one, every skipped operation is reported
 so a partial picture cannot be mistaken for a complete one. COVERAGE.md lists
 the playback inventory and the interpretations chosen where the specifications
@@ -315,7 +315,7 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-`Play` to spine's renderer; add double-byte text and EMF+ DrawString to playback;
+`Play` to spine's renderer; add EMF+ DrawString to playback;
 verify the custom line cap interpretation; and compare against Windows GDI/GDI+ when
 available. Windows remains
 the primary playback oracle. LibreOffice agreement covers the generated scenes in

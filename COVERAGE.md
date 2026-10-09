@@ -197,7 +197,7 @@ each GDI family:
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
 | Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, WMF SelectClipRegion and region SelectObject, save/restore | — |
 | Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint; every other ROP3 (SRCAND, SRCPAINT, SRCINVERT, DSTINVERT, PATINVERT…) through a `RasterBackend`; SRCAND and SRCPAINT sprite pairs as masked images for other backends | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY for backends without `RasterBackend`, apart from exact sprite pairs, such ROP3 with a hatch brush in TRANSPARENT mode, halftone with a color adjustment |
-| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts, bidirectional text and right-to-left reading order (ETO_RTLREADING, TA_RTLREADING) | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
+| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte and four double-byte (Shift_JIS, GBK, Unified Hangul, Big5) Windows code pages for text and WMF face names, and symbol fonts, bidirectional text and right-to-left reading order (ETO_RTLREADING, TA_RTLREADING) | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; JOHAB, OEM and Mac character sets; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
 | Fills | FillRgn, PaintRgn, FrameRgn; WMF FillRegion, PaintRegion, FrameRegion; EMR_GRADIENTFILL rectangle and triangle modes through a `GradientBackend` | InvertRgn and InvertRegion and flood fill, which read the destination; gradients for backends without `GradientBackend` |
 
 Interpretations where the specifications leave room or conflict:
@@ -289,6 +289,15 @@ Interpretations where the specifications leave room or conflict:
   reading order SHOULD apply only with a Hebrew or Arabic font; the flag is
   honored with every font, because the same definitions say the text MUST be
   laid out right to left. None of this has been checked against Windows.
+- Double-byte ANSI text decodes as MS-UCODEREF 3.1.5.1.1 specifies: a lead
+  byte with an unmapped trail byte becomes the code page's default
+  character in place of both bytes; a lead byte at the end, or before a NUL,
+  becomes it alone. Windows' MultiByteToWideChar decodes every byte, pair and
+  invalid sequence of the four code pages the same way (ORACLES.md).
+  ANSI records give one advance per byte, so a double-byte character
+  advances by the sum of its two bytes' advances, which keeps every later
+  character where the record places it. LibreOffice agrees
+  (`text-dbcs.wmf`).
 - Palette entries are read as GDI PALETTEENTRY values (red, green, blue,
   flags), as MS-WMF 2.2.2.13 specifies. MS-EMF 2.2.18 draws LogPaletteEntry as
   reserved, blue, green, red, which is that structure read as a most-

@@ -20,11 +20,13 @@ code or external binary image fixtures are included.
 ## Windows code page data
 
 `codepage_tables.go` is generated from Microsoft's Windows best-fit code page
-files (bestfit874.txt and bestfit1250.txt through bestfit1258.txt), which
+files (bestfit874.txt, bestfit1250.txt through bestfit1258.txt, and the
+double-byte bestfit932.txt, bestfit936.txt, bestfit949.txt and
+bestfit950.txt), which
 MS-UCODEREF 2.2.2 names as the normative code page data, as published by the
 Unicode Consortium at
 https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/ . Only
-the byte-to-UTF-16 mappings are retained. The pinned files are downloaded to
+the byte-to-UTF-16 mappings and default characters are retained. The pinned files are downloaded to
 `.external/codepages` and are not committed. They are distributed under the
 Unicode License V3:
 

@@ -115,19 +115,21 @@ func newFont(v Font, format Format) *gdiFont {
 		}
 		f.request.FaceName = string(utf16.Decode(units))
 	} else {
-		var units []uint16
-		for _, b := range v.FaceName {
+		name := v.FaceName
+		for i, b := range name {
 			if b == 0 {
+				name = name[:i]
 				break
 			}
-			units = append(units, uint16(b))
-			if b >= 0x80 {
-				table := codePageHigh[charSetCodePage[v.CharSet]]
-				if table == nil {
-					f.unsupportedWhy = "font face name in an undecoded character set"
-					break
-				}
-				units[len(units)-1] = table[b-0x80]
+		}
+		units := make([]uint16, len(name))
+		for i, b := range name {
+			units[i] = uint16(b)
+		}
+		if !ascii(name) {
+			var ok bool
+			if units, _, ok = decodeANSI(charSetCodePage[v.CharSet], name); !ok {
+				f.unsupportedWhy = "font face name in an undecoded character set"
 			}
 		}
 		f.request.FaceName = string(utf16.Decode(units))
@@ -138,61 +140,64 @@ func newFont(v Font, format Format) *gdiFont {
 	return f
 }
 
-// charSetCodePage maps single-byte CharacterSet values (MS-WMF 2.1.1.5) to
-// their Windows ANSI code pages, as Windows' TranslateCharsetInfo documents.
-var charSetCodePage = map[uint8]uint16{0: 1252, 161: 1253, 162: 1254, 163: 1258, 177: 1255, 178: 1256, 186: 1257, 204: 1251, 222: 874, 238: 1250}
+// charSetCodePage maps CharacterSet values (MS-WMF 2.1.1.5) to their Windows
+// ANSI code pages, as Windows' TranslateCharsetInfo documents.
+var charSetCodePage = map[uint8]uint16{0: 1252, 128: 932, 129: 949, 134: 936, 136: 950, 161: 1253, 162: 1254, 163: 1258, 177: 1255, 178: 1256, 186: 1257, 204: 1251, 222: 874, 238: 1250}
+
+func ascii(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
 
 // decodeText converts a record's string to UTF-16 code units, or glyph
-// indexes. Charsets that cannot be decoded are not interpreted (MS-EMF
-// 2.2.13).
-func (p *player) decodeText(t Text, f *gdiFont, wide bool) ([]uint16, bool, string) {
+// indexes. spans, when not nil, gives the number of string bytes each unit
+// came from (double-byte characters take two). Charsets that cannot be
+// decoded are not interpreted (MS-EMF 2.2.13).
+func (p *player) decodeText(t Text, f *gdiFont, wide bool) ([]uint16, []int, bool, string) {
 	glyphs := t.Options&0x10 != 0
 	switch {
 	case t.SmallChars:
 		if glyphs {
-			return nil, false, "8-bit glyph indexes"
+			return nil, nil, false, "8-bit glyph indexes"
 		}
 		out := make([]uint16, len(t.Bytes))
 		for i, b := range t.Bytes {
 			out[i] = uint16(b)
 		}
-		return out, false, ""
+		return out, nil, false, ""
 	case wide:
 		out := make([]uint16, len(t.Bytes)/2)
 		for i := range out {
 			out[i] = u16(t.Bytes[i*2:])
 		}
-		return out, glyphs, ""
+		return out, nil, glyphs, ""
 	case glyphs:
-		return nil, false, "8-bit glyph indexes"
+		return nil, nil, false, "8-bit glyph indexes"
 	}
 	cs := f.request.CharSet
 	if cs == 1 {
 		if p.options.DefaultCharSet == nil {
-			return nil, false, "DEFAULT_CHARSET text without PlayOptions.DefaultCharSet"
+			return nil, nil, false, "DEFAULT_CHARSET text without PlayOptions.DefaultCharSet"
 		}
 		cs = *p.options.DefaultCharSet
 	}
-	out := make([]uint16, len(t.Bytes))
 	if cs == 2 {
 		// Symbol fonts map their byte codes into the private-use area.
+		out := make([]uint16, len(t.Bytes))
 		for i, b := range t.Bytes {
 			out[i] = 0xf000 | uint16(b)
 		}
-		return out, false, ""
+		return out, nil, false, ""
 	}
-	table := codePageHigh[charSetCodePage[cs]]
-	if table == nil {
-		return nil, false, fmt.Sprintf("text in character set %d", cs)
+	out, spans, ok := decodeANSI(charSetCodePage[cs], t.Bytes)
+	if !ok {
+		return nil, nil, false, fmt.Sprintf("text in character set %d", cs)
 	}
-	for i, b := range t.Bytes {
-		if b < 0x80 {
-			out[i] = uint16(b)
-		} else {
-			out[i] = table[b-0x80]
-		}
-	}
-	return out, false, ""
+	return out, spans, false, ""
 }
 
 // textSpace is the frame text is laid out in. Under GM_COMPATIBLE it is device
@@ -293,7 +298,7 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	if f.unsupportedWhy != "" {
 		return p.unsupported(r, f.unsupportedWhy)
 	}
-	text, glyphs, why := p.decodeText(v, f, wide)
+	text, spans, glyphs, why := p.decodeText(v, f, wide)
 	if why != "" {
 		return p.unsupported(r, why)
 	}
@@ -324,18 +329,33 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	}
 	advances := make([]float64, len(text))
 	if n := v.Advances.Len(); n > 0 {
+		// Advances belong to the string's elements: bytes for ANSI text. A
+		// double-byte character advances by the sum of its bytes' advances,
+		// so every later origin stays where the record puts it.
+		elements := len(text)
+		if spans != nil {
+			elements = len(v.Bytes)
+		}
 		pdy := v.Options&0x2000 != 0
-		if want := len(text) * map[bool]int{false: 1, true: 2}[pdy]; n != want {
+		if want := elements * map[bool]int{false: 1, true: 2}[pdy]; n != want {
 			return malformed(r.Offset, "text advance count")
 		}
+		e := 0
 		for i := range advances {
-			if pdy {
-				if v.Advances.SignedAt(2*i+1) != 0 {
-					return p.unsupported(r, "vertical character displacement (ETO_PDY)")
+			span := 1
+			if spans != nil {
+				span = spans[i]
+			}
+			for k := 0; k < span; k++ {
+				if pdy {
+					if v.Advances.SignedAt(2*e+1) != 0 {
+						return p.unsupported(r, "vertical character displacement (ETO_PDY)")
+					}
+					advances[i] += float64(v.Advances.SignedAt(2*e)) * ts.scale.X
+				} else {
+					advances[i] += float64(v.Advances.SignedAt(e)) * ts.scale.X
 				}
-				advances[i] = float64(v.Advances.SignedAt(2*i)) * ts.scale.X
-			} else {
-				advances[i] = float64(v.Advances.SignedAt(i)) * ts.scale.X
+				e++
 			}
 		}
 	} else {

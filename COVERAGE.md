@@ -286,7 +286,7 @@ played by the GDI player, with its own device context.
 | State | Save/Restore, BeginContainer (World or Pixel units) and BeginContainerNoParams, EndContainer; Set/Reset/Multiply/Translate/Scale/RotateWorldTransform in prepend and append order; SetPageTransform in Pixel, Point, Inch, Document and Millimeter units; pixel offset, interpolation and compositing modes; rendering origin. Anti-aliasing, text hints and compositing quality are backend policy. | Display and World page units; containers in physical units (their contents are skipped as a unit); SetTSGraphics and SetTSClip |
 | Clipping | SetClipRect, SetClipPath, SetClipRegion with all six combine modes; region trees with every node type; ResetClip, OffsetClip; container clips as metaregions | — |
 | Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, brush transform, clamped) | Hatch styles 6–52, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors, preset colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
-| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps, triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
+| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (an unverified interpretation; see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
 | Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
 | Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
@@ -323,7 +323,23 @@ Interpretations where MS-EMFPLUS leaves room:
   The triangle's height and the other anchors' sizes are not given. Neither
   MS-EMFPLUS nor Microsoft's GDI+ reference gives the coordinate system of
   custom cap paths or where an adjustable arrow's vertex sits, so those caps
-  are reported. A dashed pen's line caps apply at figure ends and its dash
+  are reported unless `PlayOptions.CustomLineCaps` opts into an interpretation
+  that has not been checked against Windows:
+  - Cap space has its origin at the figure's end. +y points outward along
+    the line (back along the first segment for a start cap), and +x is +y
+    turned a quarter clockwise in pen space. Units are the pen width times
+    the cap's WidthScale.
+  - Path caps fill their fill path with the winding rule, or stroke their
+    line path with the pen width and the cap's stroke caps and join. The line
+    path wins when both are present, as Microsoft's CustomLineCap reference
+    states. The figure ends with BaseCap, shortened by BaseInset.
+  - An adjustable arrow has its vertex at the end. Its base is Width units
+    across and Height units back, with its midpoint moved MiddleInset units
+    toward the vertex (Microsoft's AdjustableArrowCap reference). It is
+    filled, or outlined when FillState is clear, and the figure ends flat at
+    the base midpoint.
+  - Translucent paint is reported, because how GDI+ composites a cap over
+    the line it overlaps is unknown. A dashed pen's line caps apply at figure ends and its dash
   cap at dash ends, which Stroke cannot express apart; dashed pens therefore
   need flat line caps.
 - Compound lines (MS-EMFPLUS 2.2.2.9) are parallel bands across the pen

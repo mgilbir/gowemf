@@ -780,7 +780,13 @@ var plusDashes = [...][]float64{1: {3, 1}, 2: {1, 1}, 3: {3, 1, 1, 1}, 4: {3, 1,
 // plusStroke resolves a pen (MS-EMFPLUS 2.2.1.7, 2.2.2.35). A World-unit
 // width is in world units, shaped by the pen transform and then the world-to-
 // destination transform; a Pixel-unit width is in device pixels.
-func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
+func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, [2]*PlusCustomLineCap, error) {
+	var caps [2]*PlusCustomLineCap
+	s, err := p.plusPen(r, id, m, &caps)
+	return s, caps, err
+}
+
+func (p *player) plusPen(r Record, id uint32, m Matrix, caps *[2]*PlusCustomLineCap) (*Stroke, error) {
 	obj, err := p.plusObjectAt(r, id)
 	if err != nil {
 		return nil, err
@@ -788,11 +794,22 @@ func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
 	pen := obj.value.(PlusPen)
 	startCap, okStart := plusCaps[pen.StartCap]
 	endCap, okEnd := plusCaps[pen.EndCap]
-	switch {
-	case pen.CustomStartCap != nil || pen.CustomEndCap != nil || pen.StartCap == 0xff || pen.EndCap == 0xff:
+	custom := pen.CustomStartCap != nil || pen.CustomEndCap != nil || pen.StartCap == 0xff || pen.EndCap == 0xff
+	if custom {
 		// MS-EMFPLUS does not define the coordinate system of cap paths or
-		// where an adjustable arrow sits relative to the line end.
-		return nil, p.unsupported(r, "EMF+ custom line cap")
+		// where an adjustable arrow sits relative to the line end; see
+		// playback_plus_caps.go for the opt-in interpretation.
+		var base [2]LineCap
+		if *caps, base, err = p.plusCustomCaps(r, pen, startCap, endCap); err != nil {
+			return nil, err
+		}
+		startCap, endCap = base[0], base[1]
+		okStart = okStart || caps[0] != nil
+		okEnd = okEnd || caps[1] != nil
+	}
+	switch {
+	case custom && (pen.LineStyle != 0 || len(pen.Compound) != 0 || pen.Width == 0):
+		return nil, p.unsupported(r, "EMF+ custom line cap on a dashed, compound or zero-width pen")
 	case !validPlusLineCap(pen.StartCap) || !validPlusLineCap(pen.EndCap):
 		return nil, malformed(r.Offset, "EMF+ line cap")
 	case !okStart || !okEnd:
@@ -828,6 +845,10 @@ func (p *player) plusStroke(r Record, id uint32, m Matrix) (*Stroke, error) {
 	}
 	if err := p.plusComposite(r, paint); err != nil {
 		return nil, err
+	}
+	if custom && paintTranslucent(paint) {
+		// Caps overlap the line; how GDI+ composites the overlap is unknown.
+		return nil, p.unsupported(r, "EMF+ custom line cap with translucent paint")
 	}
 	miter := 10.0 // GDI+'s default
 	if pen.Flags&16 != 0 {
@@ -892,7 +913,7 @@ func (p *player) plusFill(r Record, path Path, rule FillRule, id uint32, solid b
 }
 
 func (p *player) plusDraw(r Record, path Path, id uint32, m Matrix) error {
-	s, err := p.plusStroke(r, id, m)
+	s, caps, err := p.plusStroke(r, id, m)
 	if err != nil || s == nil {
 		return err
 	}
@@ -900,6 +921,9 @@ func (p *player) plusDraw(r Record, path Path, id uint32, m Matrix) error {
 		if why, ok := compoundDrawable(path, s); !ok {
 			return p.unsupported(r, why)
 		}
+	}
+	if caps[0] != nil || caps[1] != nil {
+		return p.plusDrawCaps(r, path, s, caps)
 	}
 	return p.backend.StrokePath(path, *s, p.plusCurrentClip())
 }

@@ -306,7 +306,13 @@ LibreOffice 24.2.7.2 diverges on the rest:
 LibreOffice could not settle the custom-cap convention. A file with an
 adjustable arrow cap fails to convert ("Unspecified Application Error"). Path
 caps are drawn reversed relative to the line, with an asymmetric cap
-re-centered. Custom caps therefore stay reported.
+re-centered. Custom caps therefore stay reported unless
+`PlayOptions.CustomLineCaps` opts into the interpretation in COVERAGE.md.
+`lo-plus-custom-cap.emf` pins LibreOffice's reversed path cap against that
+interpretation. Neither has been checked against Windows. Fifteen planted
+custom-cap defects were each caught by the offline tests, including both axis
+directions, insets, scales, line-versus-fill preference, the arrow geometry
+and the opt-in itself.
 
 Twenty-six planted defects in caps, compound pens and path gradients were each
 caught by the offline tests, and those that change a scene also fail the

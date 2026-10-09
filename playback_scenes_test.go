@@ -10,8 +10,13 @@ import (
 
 // playRender replays data into the reference rasterizer at w x h pixels.
 func playRender(data []byte, w, h int) (*image.NRGBA, error) {
+	return playRenderOptions(data, w, h, PlayOptions{})
+}
+
+func playRenderOptions(data []byte, w, h int, o PlayOptions) (*image.NRGBA, error) {
 	rb := newRasterBackend(w, h)
-	_, err := Play(data, PlayOptions{Destination: Box{Width: float64(w), Height: float64(h)}}, rb)
+	o.Destination = Box{Width: float64(w), Height: float64(h)}
+	_, err := Play(data, o, rb)
 	return rb.canvas, err
 }
 
@@ -31,6 +36,7 @@ type renderScene struct {
 	probes      []probe
 	libreOffice []probe
 	divergence  string
+	customCaps  bool // PlayOptions.CustomLineCaps
 }
 
 func renderScenes() []renderScene {
@@ -587,7 +593,7 @@ func probeColor(im image.Image, p probe) error {
 func TestPlaybackScenes(t *testing.T) {
 	for _, s := range renderScenes() {
 		t.Run(s.name, func(t *testing.T) {
-			im, err := playRender(s.data, 96, 64)
+			im, err := playRenderOptions(s.data, 96, 64, PlayOptions{CustomLineCaps: s.customCaps})
 			if err != nil {
 				t.Fatal(err)
 			}

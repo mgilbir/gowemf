@@ -618,6 +618,7 @@ func FuzzPlay(f *testing.F) {
 		// EMF+ records, when present, play unless the GDI fallback is chosen.
 		b = &fakeText{}
 		o.Stream.PreferGDI = false
+		o.CustomLineCaps = true
 		_, _ = Play(data, o, b)
 		if b.recordingBackend.bad != nil {
 			t.Fatal(b.recordingBackend.bad)

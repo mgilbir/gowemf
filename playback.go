@@ -242,6 +242,11 @@ type UnsupportedOperation struct {
 // guessing a code page. Text is drawn only by backends implementing
 // TextBackend.
 //
+// CustomLineCaps draws EMF+ custom and adjustable-arrow line caps under an
+// interpretation that has not been verified against Windows, because neither
+// MS-EMFPLUS nor Microsoft's GDI+ reference defines their geometry (see
+// COVERAGE.md). When false, such caps are reported unsupported.
+//
 // Unsupported is called for each operation that cannot be drawn faithfully.
 // If it is nil, Play stops with an ErrUnsupported error. If it returns nil,
 // the operation is skipped; the caller then knows the output is incomplete.
@@ -255,6 +260,7 @@ type PlayOptions struct {
 	MaxPathPoints  uint64
 	MaxImagePixels uint64
 	MaxClipSteps   uint32
+	CustomLineCaps bool
 	Unsupported    func(UnsupportedOperation) error
 }
 

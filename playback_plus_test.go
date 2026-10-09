@@ -1007,3 +1007,108 @@ func TestPlayEMFPlusPathGradient(t *testing.T) {
 		t.Fatal(skipped)
 	}
 }
+
+// pathCapObj is an EmfPlusCustomLineCap with default data: fill (flags 1)
+// or line (flags 2) paths, base cap, inset and width scale.
+func pathCapObj(flags, baseCap uint32, inset, scale float64, fill, line []byte) []byte {
+	b := cat(dwords(plusVersion, 0, flags, baseCap), fl(inset), dwords(0, 0, 0), fl(10, scale), fl(0, 0, 0, 0))
+	if flags&1 != 0 {
+		b = cat(b, dwords(uint32(len(fill))), fill)
+	}
+	if flags&2 != 0 {
+		b = cat(b, dwords(uint32(len(line))), line)
+	}
+	return b
+}
+
+func arrowCapObj(w, h, inset float64, filled uint32) []byte {
+	return cat(dwords(plusVersion, 1), fl(w, h, inset), dwords(filled, 0, 0, 0), fl(10, 1), fl(0, 0, 0, 0))
+}
+
+// capPen is a width-2 pen whose start and end caps are given; a non-nil
+// custom cap object sets LineCapTypeCustom on that end.
+func capPen(id uint8, argb, startCap, endCap uint32, start, end []byte) []byte {
+	flags := uint32(2 | 4)
+	optional := dwords(startCap, endCap)
+	if start != nil {
+		flags |= 0x800
+		optional = cat(optional, dwords(uint32(len(start))), start)
+	}
+	if end != nil {
+		flags |= 0x1000
+		optional = cat(optional, dwords(uint32(len(end))), end)
+	}
+	return plusObj(id, 2, plusPen(flags, 0, 2, optional, solidBrush(argb)))
+}
+
+func TestPlayEMFPlusCustomCaps(t *testing.T) {
+	half := plusRec(PlusSetPixelOffsetModeRecord, 4)
+	triangle := plusPathObj([]float64{-1, 0, 1, 0, 0, 2}, []byte{0, 1, 0x81})
+	line := plusRec(PlusDrawLinesRecord, 1, dwords(2), fl(10, 10, 50, 10))
+	on := PlayOptions{CustomLineCaps: true}
+	play := func(t *testing.T, o PlayOptions, records ...[]byte) (*recordingBackend, []string) {
+		t.Helper()
+		return plusPlay(t, plusScene(96, 64, append([][]byte{half}, records...)...), o)
+	}
+	// Off by default.
+	b, skipped := play(t, PlayOptions{}, capPen(1, 0xff000000, 0, 0xff, nil, pathCapObj(1, 0, 0, 1, triangle, nil)), line)
+	if len(skipped) != 1 || skipped[0] != "EMF+ custom line cap" || len(b.strokes)+len(b.fills) != 0 {
+		t.Fatal(skipped)
+	}
+	// Cap space: origin at the end, +y outward along the line, units of the
+	// pen width; +x is +y turned a quarter clockwise.
+	b, skipped = play(t, on, capPen(1, 0xff000000, 0xff, 0xff, pathCapObj(1, 0, 0, 1, triangle, nil), pathCapObj(1, 0, 0, 1, triangle, nil)), line)
+	if len(skipped) != 0 || len(b.strokes) != 1 || len(b.fills) != 2 {
+		t.Fatal(skipped, b.strokes, b.fills)
+	}
+	if s := b.strokes[0]; s.stroke.Cap != CapFlat || s.stroke.EndCap != 0 || !pointsNear(s.path.Points, Point{10, 10}, Point{50, 10}) {
+		t.Fatalf("capped line %+v", s)
+	}
+	if !pointsNear(b.fills[0].path.Points, Point{10, 8}, Point{10, 12}, Point{6, 10}) || b.fills[0].rule != NonZero {
+		t.Fatalf("start cap %v", b.fills[0].path.Points)
+	}
+	if !pointsNear(b.fills[1].path.Points, Point{50, 12}, Point{50, 8}, Point{54, 10}) {
+		t.Fatalf("end cap %v", b.fills[1].path.Points)
+	}
+	// BaseInset shortens the line; BaseCap ends it; WidthScale scales.
+	b, _ = play(t, on, capPen(1, 0xff000000, 0, 0xff, nil, pathCapObj(1, 2, 1, 2, triangle, nil)), line)
+	if s := b.strokes[0]; s.stroke.EndCap != CapRound || !pointsNear(s.path.Points, Point{10, 10}, Point{46, 10}) || !pointsNear(b.fills[0].path.Points[2:], Point{58, 10}) {
+		t.Fatalf("inset cap %+v %v", s, b.fills[0].path.Points)
+	}
+	// A line path is stroked with the pen; it wins over a fill path.
+	b, _ = play(t, on, capPen(1, 0xff000000, 0, 0xff, nil, pathCapObj(3, 0, 0, 1, triangle, plusPathObj([]float64{0, 0, 0, 3}, []byte{0, 1}))), line)
+	if len(b.fills) != 0 || len(b.strokes) != 2 || !pointsNear(b.strokes[1].path.Points, Point{50, 10}, Point{56, 10}) || b.strokes[1].stroke.Width != 2 {
+		t.Fatalf("line-path cap %+v", b.strokes)
+	}
+	// Adjustable arrow: vertex at the end, base 3x2 widths back, its midpoint
+	// pulled 0.5 widths forward; the line stops at that midpoint.
+	b, _ = play(t, on, capPen(1, 0xff000000, 0, 0xff, nil, arrowCapObj(3, 2, .5, 1)), line)
+	if !pointsNear(b.strokes[0].path.Points, Point{10, 10}, Point{47, 10}) || !pointsNear(b.fills[0].path.Points, Point{50, 10}, Point{46, 7}, Point{47, 10}, Point{46, 13}) {
+		t.Fatalf("arrow %v %v", b.strokes[0].path.Points, b.fills[0].path.Points)
+	}
+	b, _ = play(t, on, capPen(1, 0xff000000, 0, 0xff, nil, arrowCapObj(3, 2, 0, 0)), line)
+	if len(b.fills) != 0 || len(b.strokes) != 2 || b.strokes[1].path.Verbs[len(b.strokes[1].path.Verbs)-1] != PathClose {
+		t.Fatal("open arrow outline", b.strokes)
+	}
+	// Closed figures have no caps.
+	b, _ = play(t, on, capPen(1, 0xff000000, 0, 0xff, nil, arrowCapObj(3, 2, 0, 1)), plusRec(PlusDrawRectsRecord, 1, dwords(1), fl(0, 0, 10, 10)))
+	if len(b.fills) != 0 || len(b.strokes) != 1 {
+		t.Fatal("closed figure caps", b.fills)
+	}
+	for _, c := range []struct {
+		records [][]byte
+		reason  string
+	}{
+		{[][]byte{capPen(1, 0x80000000, 0, 0xff, nil, arrowCapObj(3, 2, 0, 1)), line}, "translucent"},
+		{[][]byte{capPen(1, 0xff000000, 0, 0xff, nil, nil), line}, "without LineCapTypeCustom"},
+		{[][]byte{capPen(1, 0xff000000, 0, 0, nil, arrowCapObj(3, 2, 0, 1)), line}, "without LineCapTypeCustom"},
+		{[][]byte{capPen(1, 0xff000000, 0, 0xff, nil, pathCapObj(1, 3, 0, 1, triangle, nil)), line}, "base cap"},
+		{[][]byte{capPen(1, 0xff000000, 0, 0xff, nil, pathCapObj(1, 0, 30, 1, triangle, nil)), line}, "inset beyond"},
+		{[][]byte{capPen(1, 0xff000000, 0, 0xff, nil, arrowCapObj(3, 2, 0, 1)), plusRec(PlusDrawBeziersRecord, 1, dwords(4), fl(0, 0, 10, 0, 20, 0, 30, 0))}, "inset beyond"},
+		{[][]byte{plusObj(1, 2, plusPen(4|32|0x1000, 0, 2, cat(dwords(0xff, 1), dwords(uint32(len(arrowCapObj(3, 2, 0, 1)))), arrowCapObj(3, 2, 0, 1)), solidBrush(0xff000000))), line}, "dashed"},
+	} {
+		if _, skipped := play(t, on, c.records...); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
+			t.Errorf("%s: %v", c.reason, skipped)
+		}
+	}
+}

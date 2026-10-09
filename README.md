@@ -122,8 +122,9 @@ hatch, texture and linear-gradient brushes (`PaintLinearGradient`), pens with
 caps, joins, dashes and dash offsets, shapes, paths, cardinal splines and
 bitmap images. EMF+ driver strings go to a `TextBackend` like GDI text.
 Path gradient fills, symmetric compound pens and separate start and end caps
-are drawn where MS-EMFPLUS defines them. DrawString layout, custom and arrow
-caps and metafile images are reported as unsupported.
+are drawn where MS-EMFPLUS defines them. Custom and arrow caps are drawn only
+with `PlayOptions.CustomLineCaps`, under an interpretation not verified against
+Windows. DrawString layout and metafile images are reported as unsupported.
 
 Region painting (FillRgn, PaintRgn, FrameRgn and the WMF region records),
 monochrome pattern brushes colored by the text and background colors, logical
@@ -309,8 +310,8 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-`Play` to spine's renderer; add double-byte text, EMF+ DrawString and custom
-line caps to playback; and compare against Windows GDI/GDI+ when
+`Play` to spine's renderer; add double-byte text and EMF+ DrawString to playback;
+verify the custom line cap interpretation; and compare against Windows GDI/GDI+ when
 available. Windows remains
 the primary playback oracle. LibreOffice agreement covers the generated scenes in
 ORACLES.md and diverges from the specifications in several pinned cases. No

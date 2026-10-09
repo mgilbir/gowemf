@@ -290,7 +290,7 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 		t.Run(s.name, func(t *testing.T) {
 			dir := filepath.Join(work, s.name)
 			lo := oracle.LibreOffice(t, dir, s.name, s.data, 96, 64)
-			ours, err := playRender(s.data, 96, 64)
+			ours, err := playRenderOptions(s.data, 96, 64, PlayOptions{CustomLineCaps: s.customCaps})
 			if err != nil {
 				t.Fatal(err)
 			}

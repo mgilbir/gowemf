@@ -39,6 +39,11 @@ func plusScenes() []renderScene {
 		{name: "lo-plus-path-gradient.emf", divergence: "path gradients are drawn as an elliptical blend that also covers the filled area outside the boundary",
 			data:   scenePlusPathGradient(),
 			probes: []probe{{32, 32, cRed}, {10, 32, color.NRGBA{21, 0, 234, 255}}, {70, 32, cWhite}, {32, 5, cWhite}}, libreOffice: []probe{{10, 32, color.NRGBA{153, 0, 102, 255}}, {70, 32, color.NRGBA{77, 0, 179, 255}}}},
+		// Opt-in interpretation: the triangle's tip reaches 8 units past the
+		// line end at x 60; LibreOffice draws it pointing back over the line.
+		{name: "lo-plus-custom-cap.emf", customCaps: true, divergence: "a custom path cap is drawn pointing back along the line (the coordinate system is unspecified; playback's opt-in interpretation points it outward)",
+			data:   scenePlusCustomCap(),
+			probes: []probe{{65, 12, cBlack}, {69, 12, cWhite}, {40, 12, cBlack}}, libreOffice: []probe{{65, 12, cWhite}, {40, 12, cBlack}}},
 		{name: "plus-image.emf", data: scenePlusImage(false), probes: []probe{{16, 16, cRed}, {32, 16, cLime}, {16, 32, cBlue}, {32, 32, cYellow}, {4, 4, cWhite}, {62, 16, cRed}, {74, 32, cYellow}, {90, 40, cWhite}}},
 		{name: "lo-plus-nearest.emf", divergence: "InterpolationModeNearestNeighbor is ignored; scaled images are smoothed",
 			data:   scenePlusNearest(),
@@ -278,5 +283,17 @@ func scenePlusPathGradient() []byte {
 	return plusScene96(
 		plusObj(1, 1, pathGradientBrush(1, 4, 0xffff0000, 32, 32, []uint32{0xff0000ff}, square, nil)),
 		plusRec(PlusFillRectsRecord, 0, dwords(1, 1), fl(8, 8, 80, 48)),
+	)
+}
+
+// A width-4 line with a triangular custom end cap (base across the end,
+// apex 2 widths along the line).
+func scenePlusCustomCap() []byte {
+	triangle := plusPathObj([]float64{-1, 0, 1, 0, 0, 2}, []byte{0, 1, 0x81})
+	cap := pathCapObj(1, 0, 0, 1, triangle, nil)
+	return plusScene96(
+		plusRec(PlusSetPixelOffsetModeRecord, 4),
+		plusObj(1, 2, plusPen(4|0x1000, 0, 4, cat(dwords(0xff), dwords(uint32(len(cap))), cap), solidBrush(0xff000000))),
+		plusRec(PlusDrawLinesRecord, 1, dwords(2), fl(20, 12, 60, 12)),
 	)
 }

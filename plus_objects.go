@@ -78,9 +78,10 @@ func decodePlusObject(typ uint8, data []byte, l DecodeLimits, base int, depth ui
 		n := uint64(c.dword())
 		flags := c.dword()
 		p := PlusPath{Flags: flags}
-		if flags & ^uint32(0x4800) != 0 {
-			return nil, c.allocated, failure(c.base+c.pos, "EMF+ path flags", ErrUnsupported)
-		}
+		// MS-EMFPLUS 2.2.1.6 defines only R (0x0800) and C (0x4000). Writers
+		// set other bits (0x2000 is common) without changing the layout, so
+		// they are retained in Flags but do not select an encoding.
+		flags &= 0x4800
 		p.Points = c.plusPoints(n, uint16(flags))
 		if flags&0x800 == 0 {
 			p.Types = c.elements(n, 1)

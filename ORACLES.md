@@ -260,6 +260,33 @@ caught by the offline tests; those touching a scene also fail its probes.
 The pinned corpus now plays without reported omissions once a text backend is
 present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
 
+### Raster operation scenes
+
+The scene backend implements `RasterBackend` on its own: it point-samples
+pixel centers (GDI has no anti-aliasing), takes pixels that the area and clip
+cover by at least half, and evaluates the truth table bit by bit, separately
+from `RasterOperation.Apply`. A generated test checks all 256 operations
+against `Apply`.
+
+`raster-sprite.emf` (StretchDIBits) and `raster-sprite.wmf` (StretchDIB and
+DIBStretchBlt) draw a sprite through an SRCAND mask and an SRCPAINT image, at
+2x and across a background edge. Both match LibreOffice with no unmatched
+pixels; drawing SRCAND and SRCPAINT as copies leaves 940.
+`lo-raster-ops.emf` pins the divergences:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-raster-ops.emf` | SRCINVERT drawn as SRCCOPY; DSTINVERT inverts with the selected brush, like PATINVERT; PATINVERT draws nothing | Source XOR destination, inverted destination, brush XOR destination |
+
+Rendering both sprite scenes through a backend without `RasterBackend`,
+where each pair becomes one masked image, gives pixels identical to the
+bitwise operations. Thirteen planted defects were each caught by the offline
+tests: truth-table bit order, pattern use, source alpha, SRCAND routed to an
+image copy, an unmapped destination area, null-brush and TRANSPARENT-hatch
+handling, and for merged sprites an inverted mask, a skipped black-image or
+black-and-white check, ignored placement, a mask kept across another record,
+and a mask kept across another transfer.
+
 ### EMF+ playback scenes
 
 Eight EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same

@@ -330,6 +330,7 @@ type player struct {
 	regionWork   uint64
 	generations  []uint64
 	// EMF+ playback state; plusDPI is the header's logical resolution.
+	sprite      *pendingSprite // SRCAND mask awaiting its SRCPAINT
 	plus        plusState
 	plusSaved   []plusSaved
 	plusObjects [64]plusObject
@@ -415,9 +416,38 @@ func (p *player) unsupported(r Record, reason string) error {
 }
 
 func (p *player) play(c Command) error {
+	// A held SRCAND mask is completed or reported by the next bitmap
+	// transfer; any other record reports it first. Every stream ends with
+	// an EOF record, so no mask is left held.
+	if p.sprite != nil && !transferRecord(c.Source) {
+		if err := p.flushSprite(); err != nil {
+			return err
+		}
+	}
 	err := p.dispatch(c)
 	if err == errSkip {
-		return nil
+		err = nil
+	}
+	if err == nil && p.sprite != nil && p.sprite.r.Offset != c.Source.Offset {
+		err = p.flushSprite() // the transfer ended before considering it
 	}
 	return err
+}
+
+// transferRecord reports whether a GDI record is a bitmap transfer that can
+// take a ternary raster operation.
+func transferRecord(r Record) bool {
+	switch r.Format {
+	case EMF:
+		switch r.Type {
+		case EMRBitBlt, EMRStretchBlt, EMRStretchDIBits, EMRMaskBlt:
+			return true
+		}
+	case WMF:
+		switch r.Type & 255 {
+		case 0x22, 0x23, 0x40, 0x41, 0x43:
+			return true
+		}
+	}
+	return false
 }

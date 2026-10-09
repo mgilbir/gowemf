@@ -196,7 +196,7 @@ each GDI family:
 | Geometry | Polygons/polylines/polypolygons/polypolylines (16/32-bit), Bézier and "To" forms, PolyDraw, LineTo/MoveTo, Rectangle, RoundRect, Ellipse, Arc/ArcTo/Chord/Pie, AngleArc, SetPixel | — |
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
 | Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, WMF SelectClipRegion and region SelectObject, save/restore | — |
-| Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY, halftone with a color adjustment |
+| Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint; every other ROP3 (SRCAND, SRCPAINT, SRCINVERT, DSTINVERT, PATINVERT…) through a `RasterBackend`; SRCAND and SRCPAINT sprite pairs as masked images for other backends | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY for backends without `RasterBackend`, apart from exact sprite pairs, such ROP3 with a hatch brush in TRANSPARENT mode, halftone with a color adjustment |
 | Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; right-to-left reading order; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
 | Fills | FillRgn, PaintRgn, FrameRgn; WMF FillRegion, PaintRegion, FrameRegion; EMR_GRADIENTFILL rectangle and triangle modes through a `GradientBackend` | InvertRgn and InvertRegion and flood fill, which read the destination; gradients for backends without `GradientBackend` |
 
@@ -244,8 +244,22 @@ Interpretations where the specifications leave room or conflict:
   transform (xformSrc) that leaves the source with fractional edges maps it
   exactly onto the destination, clipped there as for EMF+ images; GDI's own
   integer rounding of such sources is not modeled.
-- ROP3 operations are classified by their index byte. SRCCOPY ignores DIB
-  alpha. PolyDraw, PolylineTo and the "To" records continue from the current
+- ROP3 operations are classified by their index byte, the operation's truth
+  table (MS-WMF 2.1.1.31): bit P<<2|S<<1|D is the result for pattern, source
+  and destination bits P, S and D. SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS,
+  WHITENESS and DSTCOPY become ordinary images and fills; every other
+  operation goes to a `RasterBackend`, applied to each bit of the 8-bit
+  red, green and blue values. SRCCOPY and the raster operations ignore DIB
+  alpha. A null brush leaves the destination unchanged for operations that
+  use the pattern; a hatch brush in TRANSPARENT mode is reported for them,
+  because its background pixels have no bits to combine.
+- Without a `RasterBackend`, an SRCAND transfer is held until the next
+  record. If that is an SRCPAINT transfer with the same source rectangle,
+  placement and clip, without HALFTONE, of an image that is black wherever
+  the SRCAND bitmap is white, and that bitmap is only black and white, the
+  pair is exactly the image with the mask's black pixels opaque and its
+  white pixels transparent, and is drawn so. Otherwise both are reported, in
+  record order. PolyDraw, PolylineTo and the "To" records continue from the current
   position, starting a new figure after a closed one.
 - Text placement: EMF text records state their own graphics mode, which
   selects GM_COMPATIBLE (device space, upright, only the height scaled by the

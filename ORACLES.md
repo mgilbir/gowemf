@@ -230,6 +230,40 @@ ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.
 No GPL/MPL implementation source is read or ported. Windows GDI/GDI+ remains
 unavailable and no Windows render-equivalence claim is made.
 
+### Text scenes
+
+Text needs a typesetter, so its oracle tests live in the separate `rendercheck`
+module, which depends on forme (v0.9.0) and requires Go 1.26 without either
+reaching gowemf's own module. Its backend shares `internal/raster` with the
+scene tests and sets text from the system's Liberation Sans with GDI's
+TrueType conventions: a negative LOGFONT height is the em, a positive one the
+usWinAscent + usWinDescent cell; ascent and descent are usWin*; advances are
+hmtx widths. It refuses font requests it cannot honor instead of substituting.
+
+Ten agreement scenes (192x96) cover the alignment flags, natural and explicit
+spacing, cell-height fonts, rotated escapements, OPAQUE background cells,
+opaque and clip rectangles, TA_UPDATECP, upright text under MM_LOMETRIC and an
+anisotropic GM_COMPATIBLE page, rotated GM_ADVANCED text and ANSI WMF text
+through the code-page tables. Nine match LibreOffice within 0–8 of 18,432
+pixels under the same neighborhood metric; the decoration scene asserts the
+underline and strikeout extents by probe, because stroke position and
+thickness are each renderer's font policy. Fourteen planted text defects were
+each caught by both the offline text tests and the LibreOffice scenes.
+
+LibreOffice 24.2.7.2 renders ETO_NO_RECT records wrongly: it appears to read
+the absent rectangle anyway and misplaces or stacks the glyphs. The agreement
+scenes therefore record a zero rectangle, as Windows writers do, and the flag
+has its own pinned scene. Further pinned text divergences:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-text-no-rect.emf` | ETO_NO_RECT misparsed; glyphs stacked | Advances read from the record's offDx |
+| `lo-text-justification.emf` | SetTextJustification ignored | Break extra added to spaces |
+| `lo-text-charextra.wmf` | META_SETTEXTCHAREXTRA ignored | Extra added to each character (MS-WMF 2.3.5.25) |
+| `lo-text-right-dx.emf` | Right alignment ends at the last glyph's own advance | Ends at the sum of the explicit advances |
+| `lo-text-updatecp-right.emf` | TA_RIGHT with TA_UPDATECP leaves the position at the right end | Position moves to the string's left end |
+| `lo-text-world-stretch.emf` | Glyphs not stretched by an anisotropic GM_ADVANCED world transform | Glyphs follow the full transform (MS-EMF 2.1.16) |
+
 ## Decoder and playback extensions
 
 TIFF parsing follows the TIFF 6.0 structure, strip, PackBits, LZW, predictor and

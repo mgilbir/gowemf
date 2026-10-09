@@ -8,7 +8,9 @@ for color management; no cgo or native runtime is needed.
 Supports WMF, EMF, and EMF+ containers, typed record decoding, renderer-facing
 command streaming, object/state checks, bitmap decoding, and GDI playback of
 paths, transforms, clipping and bitmaps through a small backend interface.
-Rasterization, text shaping and EMF+ drawing belong to the consuming renderer.
+Text is laid out with GDI's rules through an optional text backend.
+Rasterization, font realization, shaping and EMF+ drawing belong to the
+consuming renderer.
 The supported record/encoding inventory and outstanding format coverage are
 explicit in [COVERAGE.md](COVERAGE.md).
 
@@ -108,9 +110,21 @@ intersect/union/xor/difference/replace/offset steps.
 The EMF header frame, or the WMF placeable bounds, is mapped onto `Destination`.
 WMF files without a placeable header need `PlayOptions.Placeable`. EMF+ files
 play only their GDI fallback, and only when `Stream.PreferGDI` is set: EMF+
-drawing is not implemented. Text output, region painting, gradients, flood
-fill, palette-relative colors, destination-dependent raster operations and
-other omissions are never skipped silently. Without an `Unsupported` callback
+drawing is not implemented. Region painting, gradients, flood fill,
+palette-relative colors, destination-dependent raster operations and other
+omissions are never skipped silently.
+
+Backends that also implement `TextBackend` (`MeasureText` and `DrawText`)
+receive text. `Play` does the GDI placement itself: text alignment, explicit
+and default spacing with character extra and justification, escapement,
+GM_COMPATIBLE versus GM_ADVANCED transforms, background cells, opaque and clip
+rectangles and current-position updates. It asks the backend only for each
+run's ascent, descent and advances, and hands it positioned code units or glyph
+indexes with a text-space transform; font realization, shaping, underline and
+strikeout are the backend's. ANSI strings are decoded with the Windows code
+pages that MS-UCODEREF names; text in the system-dependent DEFAULT_CHARSET is
+reported unless `PlayOptions.DefaultCharSet` states what the producing system
+used, and double-byte and OEM character sets are reported. Without an `Unsupported` callback
 `Play` stops with `ErrUnsupported`; with one, every skipped operation is reported
 so a partial picture cannot be mistaken for a complete one. COVERAGE.md lists
 the playback inventory and the interpretations chosen where the specifications
@@ -227,7 +241,9 @@ make bench          # generated-input microbenchmarks with allocation counts
 make corpus-download
 make test-external  # fetch/verify pinned inputs, then run corpus assertions
 make test-oracle    # download pinned POI jars; requires java and javac
-make test-render    # LibreOffice/POI raster and GDI playback comparisons; requires Liberation Sans and prlimit
+make test-render    # LibreOffice/POI raster, GDI playback and text comparisons; requires Liberation Sans, prlimit and Go 1.26 for rendercheck
+make test-external  # also verifies codepage_tables.go against the pinned code page files
+make codepages      # regenerate codepage_tables.go from the pinned files
 go run ./cmd/gowemfdump -summary file.emf
 go run ./cmd/gowemfdump -offset 128 file.emf
 ```
@@ -275,8 +291,8 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-`Play` to spine's renderer; add text, region painting, gradients and EMF+ drawing
-to playback; and compare against Windows GDI/GDI+ when available. Windows remains
+`Play` to spine's renderer; add region painting, gradients, double-byte text and
+EMF+ drawing to playback; and compare against Windows GDI/GDI+ when available. Windows remains
 the primary playback oracle. LibreOffice agreement covers the generated scenes in
 ORACLES.md and diverges from the specifications in several pinned cases. No
 pixel-perfect or full-format rendering claim is made. Fonts and metrics must be

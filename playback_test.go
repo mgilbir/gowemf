@@ -565,8 +565,9 @@ func FuzzPlay(f *testing.F) {
 		f.Add(s.data)
 	}
 	f.Add(maskBltFixture(false))
+	f.Add(emfScene(96, 64, 2, emfFont(1, -20, 300, 0, 0, "F"), emfSelect(1), emfValue(EMRSetTextAlign, 1|6), emfText(1, 4, 5, 6, &Rect{1, 2, 30, 40}, "ab c", nil, []int32{3, 4, 5, 6})))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		b := &recordingBackend{}
+		b := &fakeText{}
 		o := PlayOptions{
 			Stream:         StreamOptions{Framing: Limits{MaxBytes: 1 << 20, MaxRecordBytes: 1 << 18, MaxRecords: 4096}, Decoding: DecodeLimits{MaxElements: 4096, MaxObjectBytes: 1 << 18}, MaxObjects: 1024, MaxSavedStates: 64, PreferGDI: true},
 			Images:         ImageLimits{MaxBytes: 1 << 18, MaxPixels: 1 << 16},
@@ -577,9 +578,11 @@ func FuzzPlay(f *testing.F) {
 			MaxClipSteps:   64,
 			Unsupported:    func(UnsupportedOperation) error { return nil },
 		}
+		ansi := uint8(0)
+		o.DefaultCharSet = &ansi
 		_, _ = Play(data, o, b)
-		if b.bad != nil {
-			t.Fatal(b.bad)
+		if b.recordingBackend.bad != nil {
+			t.Fatal(b.recordingBackend.bad)
 		}
 	})
 }

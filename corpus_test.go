@@ -126,6 +126,19 @@ func TestExternalCorpus(t *testing.T) {
 			if len(backend.fills)+len(backend.strokes)+len(backend.images) == 0 {
 				t.Fatal("playback produced no drawing operations")
 			}
+			// With a text backend and an explicitly stated system charset,
+			// text is laid out rather than reported.
+			text := &fakeText{}
+			ansi := uint8(0)
+			skipped = make(map[string]int)
+			options.DefaultCharSet = &ansi
+			if _, err := Play(b, options, text); err != nil {
+				t.Fatal("text playback:", err)
+			}
+			if text.recordingBackend.bad != nil {
+				t.Fatal("text playback geometry:", text.recordingBackend.bad)
+			}
+			t.Logf("text playback: %d runs; unsupported: %v", len(text.drawn), skipped)
 		})
 	}
 }

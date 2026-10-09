@@ -12,9 +12,10 @@ type deviceContext struct {
 	mapMode                                        uint32
 	windowOrg, windowExt, viewportOrg, viewportExt Point
 	world                                          Matrix
-	pen, brush                                     objectRef
+	pen, brush, font                               objectRef
 	bkMode, polyFill, rop2, stretchMode, arcDir    uint32
-	layout, bkColor                                uint32
+	layout, bkColor, textColor, textAlign          uint32
+	charExtra, breakExtra, breakCount              int32
 	miterLimit                                     float64
 	brushOrg, position                             Point
 	clip                                           *ClipRegion
@@ -24,7 +25,7 @@ type deviceContext struct {
 func defaultDeviceContext() deviceContext {
 	return deviceContext{
 		mapMode: 1, windowExt: Point{1, 1}, viewportExt: Point{1, 1}, world: Identity(),
-		pen: stockRef(stockPen(0x00000000, false)), brush: stockRef(stockBrush(0, 0x00ffffff)),
+		pen: stockRef(stockPen(0x00000000, false)), brush: stockRef(stockBrush(0, 0x00ffffff)), font: stockRef(stockFonts[systemFont]),
 		bkMode: 2, polyFill: 1, rop2: 13, stretchMode: 1, arcDir: 1, bkColor: 0x00ffffff, miterLimit: 10,
 	}
 }
@@ -38,6 +39,7 @@ type objectRef struct {
 	stock      bool
 	pen        *gdiPen
 	brush      *gdiBrush
+	font       *gdiFont
 }
 
 func stockRef(v any) objectRef {
@@ -47,6 +49,8 @@ func stockRef(v any) objectRef {
 		r.pen = o
 	case *gdiBrush:
 		r.brush = o
+	case *gdiFont:
+		r.font = o
 	}
 	return r
 }
@@ -54,6 +58,7 @@ func stockRef(v any) objectRef {
 type playObject struct {
 	pen    *gdiPen
 	brush  *gdiBrush
+	font   *gdiFont
 	region bool
 }
 
@@ -265,18 +270,24 @@ func (p *player) restore(n int32) {
 	// Stream has already validated the level against its own saved count.
 	p.dc = p.saved[level]
 	p.saved = p.saved[:level]
-	p.dc.pen = p.valid(p.dc.pen, true)
-	p.dc.brush = p.valid(p.dc.brush, false)
+	p.revalidate()
 }
 
-func (p *player) valid(r objectRef, pen bool) objectRef {
-	if r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation {
-		return r
+// revalidate replaces selections whose object was deleted or whose slot was
+// reused with the default stock objects (MS-EMF 3.1.1.1).
+func (p *player) revalidate() {
+	live := func(r objectRef) bool {
+		return r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation
 	}
-	if pen {
-		return stockRef(stockPens[1])
+	if !live(p.dc.pen) {
+		p.dc.pen = stockRef(stockPens[1])
 	}
-	return stockRef(stockBrushes[0])
+	if !live(p.dc.brush) {
+		p.dc.brush = stockRef(stockBrushes[0])
+	}
+	if !live(p.dc.font) {
+		p.dc.font = stockRef(stockFonts[systemFont])
+	}
 }
 
 func (p *player) create(r Record, id uint32, body any) {
@@ -286,6 +297,8 @@ func (p *player) create(r Record, id uint32, body any) {
 		o.pen = newPen(v, r.Format == EMF && r.Type == EMRExtCreatePen)
 	case Brush, PatternBrush, PackedPatternBrush, BitmapPatternBrush:
 		o.brush = newBrush(r, v)
+	case Font:
+		o.font = newFont(v, r.Format)
 	case WMFRegion:
 		o.region = true
 	}
@@ -305,16 +318,20 @@ func (p *player) selectObject(r Record, id uint32) error {
 			p.dc.brush = stockRef(stockBrushes[0]) // DC_BRUSH defaults to white
 		case n == 19:
 			p.dc.pen = stockRef(stockPens[1]) // DC_PEN defaults to black
+		case stockFonts[n] != nil:
+			p.dc.font = stockRef(stockFonts[n])
 		}
 		return nil
 	}
 	o := p.objects[id]
-	ref := objectRef{slot: id, generation: p.generations[id], pen: o.pen, brush: o.brush}
+	ref := objectRef{slot: id, generation: p.generations[id], pen: o.pen, brush: o.brush, font: o.font}
 	switch {
 	case o.pen != nil:
 		p.dc.pen = ref
 	case o.brush != nil:
 		p.dc.brush = ref
+	case o.font != nil:
+		p.dc.font = ref
 	case o.region:
 		// Selecting a WMF region sets the clipping region.
 		return p.unsupported(r, "WMF region clipping")
@@ -325,8 +342,7 @@ func (p *player) selectObject(r Record, id uint32) error {
 func (p *player) deleteObject(id uint32) {
 	p.objects[id] = playObject{}
 	p.generations[id]++
-	p.dc.pen = p.valid(p.dc.pen, true)
-	p.dc.brush = p.valid(p.dc.brush, false)
+	p.revalidate()
 }
 
 // clip combines area with the current clipping region.

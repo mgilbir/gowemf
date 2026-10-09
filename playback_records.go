@@ -24,11 +24,20 @@ func (p *player) dispatch(c Command) error {
 func (p *player) wmf(c Command) error {
 	r, body := c.Source, c.Body
 	switch r.Type & 255 {
-	case 0x00, 0x05, 0x35, 0x2e, 0x09, 0x08, 0x0a, 0x31, 0x26, 0x34, 0x36, 0x37, 0x39:
-		// EOF, SetRelAbs (ignored by MS-WMF), RealizePalette, text state,
-		// mapper flags, escapes and palette maintenance. Palette-relative
-		// colors are rejected where they are used.
+	case 0x00, 0x05, 0x35, 0x31, 0x26, 0x34, 0x36, 0x37, 0x39:
+		// EOF, SetRelAbs (ignored by MS-WMF), RealizePalette, mapper flags,
+		// escapes and palette maintenance. Palette-relative colors are
+		// rejected where they are used.
 		return nil
+	case 0x2e:
+		p.dc.textAlign = body.(Value).Value
+	case 0x09:
+		p.dc.textColor = body.(Value).Value
+	case 0x08:
+		p.dc.charExtra = body.(SignedValue).Value
+	case 0x0a:
+		v := body.(TextJustification)
+		p.dc.breakExtra, p.dc.breakCount = v.Extra, v.Count
 	case 0x1e:
 		return p.save(r)
 	case 0x27:
@@ -101,7 +110,7 @@ func (p *player) wmf(c Command) error {
 	case 0x38:
 		return p.poly(c, polyPolygon, body.(Poly))
 	case 0x32:
-		return p.text(c, body.(Text))
+		return p.text(c, body.(Text), false)
 	case 0x40, 0x41, 0x43, 0x33, 0x1d:
 		v := body.(PackedDIBTransfer)
 		b := blit{r: r, rop: v.RasterOperation, dest: v.Destination, destSize: v.DestinationSize, src: v.Source, srcSize: v.SourceSize, packed: v.DIB, hasBitmap: !v.DeviceSource && len(v.DIB) != 0, usage: v.Usage, colorState: c.ColorState}
@@ -128,7 +137,7 @@ func (p *player) wmf(c Command) error {
 	case 0x2c:
 		return p.unsupported(r, "WMF region clipping")
 	case 0x21:
-		return p.text(c, body.(Text))
+		return p.text(c, body.(Text), false)
 	case 0x19, 0x48:
 		return p.unsupported(r, "flood fill")
 	case 0x28, 0x29, 0x2a, 0x2b:
@@ -142,14 +151,20 @@ func (p *player) wmf(c Command) error {
 func (p *player) emf(c Command) error {
 	r, body := c.Source, c.Body
 	switch r.Type {
-	case EMRHeader, EMREOF, EMRComment, EMRSetTextAlign, EMRSetTextColor, EMRSetMapperFlags,
-		EMRSetTextJustification, EMRSelectPalette, EMRRealizePalette, EMRCreatePalette,
+	case EMRHeader, EMREOF, EMRComment, EMRSetMapperFlags, EMRSelectPalette, EMRRealizePalette, EMRCreatePalette,
 		EMRSetPaletteEntries, EMRResizePalette, EMRSetICMMode, EMRCreateColorSpace,
 		EMRCreateColorSpaceW, EMRSetColorSpace, EMRDeleteColorSpace, EMRSetColorAdjustment,
 		EMRSetICMProfileA, EMRSetICMProfileW, EMRColorMatchToTargetW, EMRColorCorrectPalette:
-		// Text state and color state are not drawn here; ColorState is checked
-		// by every drawing operation and palette-relative colors are rejected.
+		// Color state is not drawn here; ColorState is checked by every
+		// drawing operation and palette-relative colors are rejected.
 		return nil
+	case EMRSetTextAlign:
+		p.dc.textAlign = body.(Value).Value
+	case EMRSetTextColor:
+		p.dc.textColor = body.(Value).Value
+	case EMRSetTextJustification:
+		v := body.(TextJustification)
+		p.dc.breakExtra, p.dc.breakCount = v.Extra, v.Count
 	case EMRSaveDC:
 		return p.save(r)
 	case EMRRestoreDC:
@@ -302,9 +317,10 @@ func (p *player) emf(c Command) error {
 		}
 		return p.blit(b)
 	case EMRExtTextOutA, EMRExtTextOutW, EMRSmallTextOut:
-		return p.text(c, body.(Text))
+		v := body.(Text)
+		return p.text(c, v, v.Unicode)
 	case EMRPolyTextOutA, EMRPolyTextOutW:
-		return p.unsupported(r, "text output")
+		return p.polyText(c, body.(PolyText), r.Type == EMRPolyTextOutW)
 	case EMRExtFloodFill:
 		return p.unsupported(r, "flood fill")
 	case EMRFillRgn, EMRFrameRgn, EMRInvertRgn, EMRPaintRgn:
@@ -589,40 +605,6 @@ func (p *player) setPixel(c Command, v Pixel) error {
 	s.lineTo(Point{o.X + 1, o.Y})
 	s.lineTo(Point{o.X + 1, o.Y + 1})
 	s.lineTo(Point{o.X, o.Y + 1})
-	b.close()
-	return p.backend.FillPath(b.path, NonZero, Paint{Kind: PaintSolid, Color: col}, p.currentClip())
-}
-
-// text supports only the empty, opaque ExtTextOut form that fills a rectangle
-// with the background color. Glyph output is not implemented.
-func (p *player) text(c Command, v Text) error {
-	if len(v.Bytes) != 0 {
-		return p.unsupported(c.Source, "text output")
-	}
-	if v.Options&2 == 0 || !v.HasRectangle {
-		return nil
-	}
-	if p.constructing {
-		return p.unsupported(c.Source, "text output in a path bracket")
-	}
-	if err := p.drawable(c.Source, c.ColorState); err != nil {
-		return err
-	}
-	col, err := p.color(c.Source, p.dc.bkColor)
-	if err != nil {
-		return err
-	}
-	m, err := p.toDestination(c.Source)
-	if err != nil {
-		return err
-	}
-	l, t, r, bt := normalize(v.Rectangle)
-	b := pathBuilder{limit: 4}
-	s := shape{&b, m}
-	s.moveTo(Point{l, t})
-	s.lineTo(Point{r, t})
-	s.lineTo(Point{r, bt})
-	s.lineTo(Point{l, bt})
 	b.close()
 	return p.backend.FillPath(b.path, NonZero, Paint{Kind: PaintSolid, Color: col}, p.currentClip())
 }

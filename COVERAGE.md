@@ -188,7 +188,8 @@ GDI fallback on request. Coverage of each family:
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
 | Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, save/restore | WMF SelectClipRegion |
 | Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY, halftone with a color adjustment |
-| Text and fills | Empty ETO_OPAQUE ExtTextOut, which fills its rectangle with the background color | Glyph output, PolyTextOut, region painting, flood fill, gradient fill |
+| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; right-to-left reading order; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
+| Fills | — | Region painting, flood fill, gradient fill |
 
 Interpretations where the specifications leave room or conflict:
 
@@ -229,6 +230,20 @@ Interpretations where the specifications leave room or conflict:
 - ROP3 operations are classified by their index byte. SRCCOPY ignores DIB
   alpha. PolyDraw, PolylineTo and the "To" records continue from the current
   position, starting a new figure after a closed one.
+- Text placement: EMF text records state their own graphics mode, which
+  selects GM_COMPATIBLE (device space, upright, only the height scaled by the
+  y-axis and advances by the x-axis) or GM_ADVANCED (world space, full
+  transform, orientation relative to the escapement); WMF is GM_COMPATIBLE.
+  The string extent for alignment and TA_UPDATECP is the sum of the advances
+  used. With TA_UPDATECP the position moves to the string's end in its drawing
+  direction: forward for TA_LEFT, back for TA_RIGHT, unchanged for TA_CENTER.
+  Character extra and justification apply only without explicit advances and
+  are rounded to device pixels under GM_COMPATIBLE; break extra goes to U+0020,
+  with any remainder one unit at a time to the first breaks. The WMF character
+  extra is read as signed, as GDI's SetTextCharacterExtra takes it, although
+  MS-WMF 2.3.5.25 describes the field as unsigned. Symbol-charset bytes map to
+  U+F000+byte, the private-use range symbol fonts' Windows cmaps use. Charsets
+  map to code pages as Windows' TranslateCharsetInfo documents.
 - GDI's integer pixel rules beyond edge exclusion belong to the backend.
   `Stroke.PixelCenter` gives half a device pixel in destination units for
   backends that center lines on device pixels, as GDI does.

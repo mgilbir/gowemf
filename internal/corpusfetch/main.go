@@ -23,11 +23,12 @@ func main() {
 
 func run() error {
 	oracle := flag.Bool("oracle", false, "download pinned execution-only POI oracle jars")
+	codepages := flag.Bool("codepages", false, "download pinned Windows code page data files")
 	flag.Parse()
 	client := &http.Client{
 		Timeout: 45 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || req.URL.Scheme != "https" || (req.URL.Host != "raw.githubusercontent.com" && req.URL.Host != "repo.maven.apache.org") {
+			if len(via) >= 5 || req.URL.Scheme != "https" || (req.URL.Host != "raw.githubusercontent.com" && req.URL.Host != "repo.maven.apache.org" && req.URL.Host != "www.unicode.org") {
 				return fmt.Errorf("refusing download redirect")
 			}
 			return nil
@@ -38,6 +39,15 @@ func run() error {
 			f := corpus.File{Path: filepath.Base(a.Path), SHA256: a.SHA256, Bytes: a.Bytes}
 			if err := fetchURL(client, filepath.Join(".external", "oracle"), f, corpus.MavenURL+a.Path); err != nil {
 				return err
+			}
+			fmt.Println("verified", f.Path)
+		}
+		return nil
+	}
+	if *codepages {
+		for _, f := range corpus.CodePages {
+			if err := fetchURL(client, filepath.Join(".external", "codepages"), f, corpus.CodePageURL+f.Path); err != nil {
+				return fmt.Errorf("%s: %w", f.Path, err)
 			}
 			fmt.Println("verified", f.Path)
 		}

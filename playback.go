@@ -175,6 +175,11 @@ type UnsupportedOperation struct {
 // limits select defaults: 4,000,000 points per path, 64,000,000 cumulative
 // decoded bitmap pixels and 4,096 clip steps per region chain.
 //
+// DefaultCharSet is the CharacterSet that DEFAULT_CHARSET fonts resolve to on
+// the producing system; nil reports such ANSI text unsupported rather than
+// guessing a code page. Text is drawn only by backends implementing
+// TextBackend.
+//
 // Unsupported is called for each operation that cannot be drawn faithfully.
 // If it is nil, Play stops with an ErrUnsupported error. If it returns nil,
 // the operation is skipped; the caller then knows the output is incomplete.
@@ -184,6 +189,7 @@ type PlayOptions struct {
 	Destination    Box
 	Placeable      *PlaceableHeader
 	ColorTransform ColorTransformFactory
+	DefaultCharSet *uint8
 	MaxPathPoints  uint64
 	MaxImagePixels uint64
 	MaxClipSteps   uint32

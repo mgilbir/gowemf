@@ -47,3 +47,28 @@ func TestExtractEnhancedMetafile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestExtractEnhancedMetafilePrivateComments interleaves private MFCOMMENT
+// records and other escapes with the WMFC fragments.
+func TestExtractEnhancedMetafilePrivateComments(t *testing.T) {
+	emf := emfFixture()
+	plain := embeddedEMFFixture(emf, 31)
+	var fragments []Record
+	if _, err := Walk(plain, Limits{}, func(r Record) error {
+		if r.Type == MetaEscape {
+			fragments = append(fragments, r)
+		}
+		return nil
+	}); err != nil || len(fragments) != 2 {
+		t.Fatal(err, len(fragments))
+	}
+	comment := wmfEscape(15, []byte("MathType"))
+	wmf := wmfDocument(0, comment, fragments[0], wmfEscape(38, []byte{1, 0}), comment, fragments[1], comment)
+	out, err := ExtractEnhancedMetafile(wmf, Limits{})
+	if err != nil || !bytes.Equal(out, emf) {
+		t.Fatal(err)
+	}
+	if got, err := ExtractEnhancedMetafile(wmfDocument(0, comment), Limits{}); err != nil || got != nil {
+		t.Fatal(got, err)
+	}
+}

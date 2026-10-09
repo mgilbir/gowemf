@@ -175,6 +175,70 @@ GDI commands carry `ColorState` snapshots for selected source spaces, ICM mode,
 output profiles, proofing metadata and color adjustments. Save/restore and deleted
 color-object lifetimes are handled without mutating previously emitted snapshots.
 
+## GDI playback
+
+`Play` interprets the WMF and EMF GDI streams; EMF+ files play only their Dual
+GDI fallback on request. Coverage of each family:
+
+| Family | Played | Reported as unsupported |
+| --- | --- | --- |
+| State | SaveDC/RestoreDC (relative and WMF absolute), map modes 1–8, window/viewport origin/extent/offset/scale, Set/ModifyWorldTransform (all four modes), background mode/color, poly-fill mode, ROP2, stretch mode, arc direction, miter limit, brush origin, current position | Right-to-left layout; ICM conversion with a non-sRGB source, output profile or proofing target |
+| Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch and DIB pattern brushes, stock objects including DC_PEN/DC_BRUSH defaults, WMF lowest-free-slot reuse, EMF handle reuse | Monochrome and Bitmap16 pattern brushes, DIB pattern pens, dithered hatch styles, palette-relative COLORREFs and DIB colors, selecting a WMF region |
+| Geometry | Polygons/polylines/polypolygons/polypolylines (16/32-bit), Bézier and "To" forms, PolyDraw, LineTo/MoveTo, Rectangle, RoundRect, Ellipse, Arc/ArcTo/Chord/Pie, AngleArc, SetPixel | — |
+| Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
+| Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, save/restore | WMF SelectClipRegion |
+| Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY, halftone with a color adjustment |
+| Text and fills | Empty ETO_OPAQUE ExtTextOut, which fills its rectangle with the background color | Glyph output, PolyTextOut, region painting, flood fill, gradient fill |
+
+Interpretations where the specifications leave room or conflict:
+
+- EMF records no graphics mode. A non-identity world transform implies
+  GM_ADVANCED, because GDI records world transforms only in that mode; otherwise
+  GM_COMPATIBLE applies. Under GM_COMPATIBLE, bounding-rectangle shapes are built
+  in device space with the right and bottom edges excluded and the arc direction
+  unreflected (MS-EMF 2.1.16); under GM_ADVANCED they are built in world space
+  with edges included. WMF is always GM_COMPATIBLE.
+- LogPen widths are logical units scaled by the logical x-axis (MS-WMF 3.1.4.2)
+  and are round in device space under GM_COMPATIBLE; geometric pens follow the
+  full world transform under GM_ADVANCED. MS-EMF 2.2.19's statement that
+  non-geometric LogPen widths are device units conflicts with its own MUST that
+  they be 1, and with the GDI call EMR_CREATEPEN records. A zero width is a
+  hairline, as are cosmetic extended pens.
+- Deleting a selected object activates the default stock object (MS-EMF
+  3.1.1.1). The same rule applies to WMF, whose specification releases the
+  object's resources on deletion. A restored selection whose slot was deleted
+  or reused also falls back to the default instead of selecting another object.
+- MM_ISOTROPIC adjusts the stored viewport extent whenever an extent changes,
+  keeping the smaller physical scale (MS-WMF 2.1.1.16). Switching to a scalable
+  mode retains the current extents; zero extents and invalid modes are ignored,
+  as the GDI calls they record would fail. Extents are kept as floating-point
+  values rather than GDI's integers.
+- WMF device units are destination units: the placeable bounds are the initial
+  window and the destination is the viewport (MS-WMF 3.1.3); records may then
+  replace either. Fixed mapping modes use the resolution those bounds imply.
+  EMF device units are reference-device pixels mapped onto the destination by
+  the header frame (or the inclusive bounds when the frame is empty).
+- ExtSelectClipRgn regions are logical units, as MS-EMF 2.3.2.2 specifies. The
+  "no effect" rule for bitmap records whose Bounds miss the clip is not applied;
+  the drawing itself is clipped.
+- StretchDIBits sources use an upper-left origin and SetDIBitsToDevice a
+  lower-left origin, per MS-EMF 2.3.1.7 and 2.3.1.5; the WMF StretchDIB and
+  SetDIBToDev records follow the same rules. A lower-left source in a top-down
+  DIB is reported unless the source is the whole bitmap. Source rectangles are
+  clamped to the bitmap and only existing pixels are drawn.
+- ROP3 operations are classified by their index byte. SRCCOPY ignores DIB
+  alpha. PolyDraw, PolylineTo and the "To" records continue from the current
+  position, starting a new figure after a closed one.
+- GDI's integer pixel rules beyond edge exclusion belong to the backend.
+  `Stroke.PixelCenter` gives half a device pixel in destination units for
+  backends that center lines on device pixels, as GDI does.
+
+Hatches and predefined dash patterns are delivered as styles with their device
+pattern grid; their pixel patterns are drawn by the backend. Path and clip
+geometry is retained in destination coordinates, so a path survives transform
+changes made after it is recorded. Each clip step is an immutable node shared by
+saved states; the chain length is bounded across the clip and metaregions.
+
 ## Pixel decoding
 
 - DIB headers: CORE, INFO, V4, V5. V4/V5 retain calibrated RGB or bounded
@@ -240,10 +304,13 @@ are exposed as renderer state rather than approximated.
 Generated tests cover signed coordinates, variable offsets/counts, text padding,
 object reuse, path/save-state errors, stream selection, continuation padding,
 region/gradient bounds, bitmap orientation, masks, palettes, RLE, alpha and image
-budgets. Six fuzz targets cover framing, typed records/objects, DIBs, streams,
-TIFF and ICC color transform integration. Generated color tests include analytic linear-RGB
+budgets. Seven fuzz targets cover framing, typed records/objects, DIBs, streams,
+playback, TIFF and ICC color transform integration. Generated color tests include analytic linear-RGB
 to-sRGB expectations, alpha preservation, and concurrent backend calls.
 The pinned corpus and POI comparisons are described in ORACLES.md. Passing them
 does not establish full specification conformance or render equivalence. Linux
-render comparisons cover generated raster transfers and TIFFs, not vector/text
-playback; the known LibreOffice WMF discrepancy is recorded separately.
+render comparisons cover generated raster transfers, TIFFs and GDI playback
+scenes for paths, transforms, mapping modes, objects, clipping and bitmaps, but
+not text. Known LibreOffice divergences are pinned separately in ORACLES.md.
+Playback unit tests and offline scene probes check spec-derived geometry and
+pixels in `make check`; the pinned corpus must play with every omission reported.

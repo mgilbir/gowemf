@@ -27,6 +27,7 @@ fuzz:
 	go test -run='^$$' -fuzz=FuzzStream -fuzztime=30s -parallel=2 .
 	go test -run='^$$' -fuzz=FuzzColorTransform -fuzztime=30s -parallel=2 .
 	go test -run='^$$' -fuzz=FuzzTIFF -fuzztime=30s -parallel=2 .
+	go test -run='^$$' -fuzz=FuzzPlay -fuzztime=30s -parallel=2 .
 
 bench:
 	go test -run='^$$' -bench=. -benchmem .

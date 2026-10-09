@@ -222,7 +222,9 @@ func runRenderTool(ctx context.Context, name string, args ...string) ([]byte, er
 	return out.Bytes(), err
 }
 
-func TestLibreOfficeRenderOracle(t *testing.T) {
+// renderEnvironment checks prerequisites and records tool versions.
+func renderEnvironment(t *testing.T) (work, version string) {
+	t.Helper()
 	if os.Getenv("GOWEMF_RENDER") != "1" {
 		t.Skip("run make test-render")
 	}
@@ -249,70 +251,137 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 		t.Fatal("font prerequisite", string(font), err)
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
-	version, err := runRenderTool(ctx, "libreoffice", "--version")
+	out, err := runRenderTool(ctx, "libreoffice", "--version")
 	cancel()
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, _ := json.MarshalIndent(map[string]string{"libreoffice": strings.TrimSpace(string(version)), "font": strings.TrimSpace(string(font)), "coverage": "generated raster transfers; no text or vector-playback equivalence claim"}, "", "  ")
+	version = strings.TrimSpace(string(out))
+	metadata, _ := json.MarshalIndent(map[string]string{"libreoffice": version, "font": strings.TrimSpace(string(font)), "coverage": "generated raster transfers and GDI playback scenes (paths, transforms, objects, clipping, bitmaps); no text equivalence claim"}, "", "  ")
 	if err := os.WriteFile(filepath.Join(work, "environment.json"), metadata, 0600); err != nil {
 		t.Fatal(err)
 	}
-	inputs := renderTIFFFixtures()
-	inputs["bitmap.emf"] = renderEMFFixture()
-	inputs["bitmap.wmf"] = renderWMFFixture()
-	for name, data := range inputs {
-		t.Run(name, func(t *testing.T) {
-			dir := filepath.Join(work, name)
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				t.Fatal(err)
-			}
-			input := filepath.Join(dir, name)
-			if err := os.WriteFile(input, data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			// Importing a metafile alone creates a default letter-sized Draw
-			// page. Give the oracle an explicit zero-margin page/frame instead
-			// of cropping its output after the fact.
-			uri := (&url.URL{Scheme: "file", Path: input}).String()
-			document := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+	return work, version
+}
+
+// libreOfficeRender exports one generated input through LibreOffice Draw at
+// exactly w x h pixels and returns the decoded PNG.
+func libreOfficeRender(t *testing.T, dir, name string, data []byte, w, h int) image.Image {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(dir, name)
+	if err := os.WriteFile(input, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Importing a metafile alone creates a default letter-sized Draw page.
+	// Give the oracle an explicit zero-margin page/frame with the output's
+	// aspect ratio instead of cropping its output after the fact.
+	const mmPerPixel = 169.333333 / 64
+	pw, ph := fmt.Sprintf("%.6fmm", float64(w)*mmPerPixel), fmt.Sprintf("%.6fmm", float64(h)*mmPerPixel)
+	uri := (&url.URL{Scheme: "file", Path: input}).String()
+	document := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.2" office:mimetype="application/vnd.oasis.opendocument.graphics">
 <office:font-face-decls><style:font-face style:name="Liberation Sans" svg:font-family="Liberation Sans"/></office:font-face-decls>
 <office:styles/>
-<office:automatic-styles><style:page-layout style:name="RenderPage"><style:page-layout-properties fo:page-width="169.333333mm" fo:page-height="84.666667mm" fo:margin-left="0mm" fo:margin-right="0mm" fo:margin-top="0mm" fo:margin-bottom="0mm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles>
+<office:automatic-styles><style:page-layout style:name="RenderPage"><style:page-layout-properties fo:page-width="%[2]s" fo:page-height="%[3]s" fo:margin-left="0mm" fo:margin-right="0mm" fo:margin-top="0mm" fo:margin-bottom="0mm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles>
 <office:master-styles><style:master-page style:name="RenderMaster" style:page-layout-name="RenderPage"/></office:master-styles>
-<office:body><office:drawing><draw:page draw:name="page1" draw:master-page-name="RenderMaster"><draw:frame svg:x="0mm" svg:y="0mm" svg:width="169.333333mm" svg:height="84.666667mm"><draw:image xlink:href="%s" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></draw:page></office:drawing></office:body></office:document>`, html.EscapeString(uri))
-			input = filepath.Join(dir, "scene.fodg")
-			if err := os.WriteFile(input, []byte(document), 0600); err != nil {
-				t.Fatal(err)
+<office:body><office:drawing><draw:page draw:name="page1" draw:master-page-name="RenderMaster"><draw:frame svg:x="0mm" svg:y="0mm" svg:width="%[2]s" svg:height="%[3]s"><draw:image xlink:href="%[1]s" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></draw:page></office:drawing></office:body></office:document>`, html.EscapeString(uri), pw, ph)
+	input = filepath.Join(dir, "scene.fodg")
+	if err := os.WriteFile(input, []byte(document), 0600); err != nil {
+		t.Fatal(err)
+	}
+	profile := (&url.URL{Scheme: "file", Path: filepath.Join(dir, "profile")}).String()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	filter := fmt.Sprintf(`png:draw_png_Export:{"PixelWidth":{"type":"long","value":"%d"},"PixelHeight":{"type":"long","value":"%d"},"Translucent":{"type":"boolean","value":"false"}}`, w, h)
+	log, err := runRenderTool(ctx, "prlimit", "--as=2147483648", "--cpu=60", "--", "libreoffice", "-env:UserInstallation="+profile, "--headless", "--convert-to", filter, "--outdir", dir, input)
+	if err != nil {
+		t.Fatal("LibreOffice render", err, string(log))
+	}
+	file, err := os.Open(filepath.Join(dir, "scene.png"))
+	if err != nil {
+		t.Fatal(err, string(log))
+	}
+	defer file.Close()
+	pngBytes, err := io.ReadAll(io.LimitReader(file, 4<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(pngBytes))
+	if err != nil || cfg.Width != w || cfg.Height != h {
+		t.Fatal("oracle PNG dimensions", cfg, err)
+	}
+	oracle, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return oracle
+}
+
+// montage places images side by side, enlarged for inspection.
+func montage(ims ...image.Image) *image.NRGBA {
+	const k = 5
+	w, h := ims[0].Bounds().Dx(), ims[0].Bounds().Dy()
+	out := image.NewNRGBA(image.Rect(0, 0, (w*k+4)*len(ims), h*k))
+	for i, im := range ims {
+		for y := 0; y < h*k; y++ {
+			for x := 0; x < w*k; x++ {
+				out.Set(i*(w*k+4)+x, y, im.At(x/k, y/k))
 			}
-			profile := (&url.URL{Scheme: "file", Path: filepath.Join(dir, "profile")}).String()
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			filter := `png:draw_png_Export:{"PixelWidth":{"type":"long","value":"64"},"PixelHeight":{"type":"long","value":"32"},"Translucent":{"type":"boolean","value":"false"}}`
-			log, err := runRenderTool(ctx, "prlimit", "--as=2147483648", "--cpu=60", "--", "libreoffice", "-env:UserInstallation="+profile, "--headless", "--convert-to", filter, "--outdir", dir, input)
-			if err != nil {
-				t.Fatal("LibreOffice render", err, string(log))
+		}
+	}
+	return out
+}
+
+func diffImage(a, b image.Image) *image.NRGBA {
+	r := a.Bounds()
+	out := image.NewNRGBA(r)
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			ar, ag, ab, _ := a.At(x, y).RGBA()
+			br, bg, bb, _ := b.At(x, y).RGBA()
+			d := func(p, q uint32) uint8 {
+				if p > q {
+					return uint8((p - q) >> 8)
+				}
+				return uint8((q - p) >> 8)
 			}
-			path := filepath.Join(dir, "scene.png")
-			file, err := os.Open(path)
-			if err != nil {
-				t.Fatal(err, string(log))
-			}
-			defer file.Close()
-			pngBytes, err := io.ReadAll(io.LimitReader(file, 1<<20))
-			if err != nil {
-				t.Fatal(err)
-			}
-			cfg, err := png.DecodeConfig(bytes.NewReader(pngBytes))
-			if err != nil || cfg.Width != 64 || cfg.Height != 32 {
-				t.Fatal("oracle PNG dimensions", cfg, err)
-			}
-			oracle, err := png.Decode(bytes.NewReader(pngBytes))
-			if err != nil {
-				t.Fatal(err)
-			}
+			v := 255 - max(d(ar, br), d(ag, bg), d(ab, bb))
+			out.Set(x, y, color.NRGBA{v, v, v, 255})
+		}
+	}
+	return out
+}
+
+func writePNG(t *testing.T, path string, im image.Image) {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, im); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLibreOfficeRenderOracle(t *testing.T) {
+	work, version := renderEnvironment(t)
+	inputs := renderTIFFFixtures()
+	inputs["bitmap.emf"] = renderEMFFixture()
+	inputs["bitmap.wmf"] = renderWMFFixture()
+	// The same WMF with a MEMORYMETAFILE header type must agree; LibreOffice
+	// renders the DISKMETAFILE type blank.
+	memory := renderWMFFixture()
+	put16(memory, 22, 1)
+	inputs["bitmap-memory.wmf"] = memory
+	for name, data := range inputs {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(work, name)
+			oracle := libreOfficeRender(t, dir, name, data, 64, 32)
 			var ours image.Image
+			var err error
 			if strings.HasSuffix(name, ".tiff") {
 				var parsed *TIFF
 				parsed, err = ParseTIFF(data, ImageLimits{})
@@ -321,6 +390,16 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 				}
 			} else {
 				ours, err = libraryBitmapRender(data)
+				if err == nil {
+					// The bitmap must also survive placement by Play.
+					var played image.Image
+					played, err = playRender(data, 64, 32)
+					if err == nil {
+						if err = comparePixels(ours, played, 0, 0); err != nil {
+							err = fmt.Errorf("Play bitmap placement: %w", err)
+						}
+					}
+				}
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -346,7 +425,7 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 					t.Fatal("POI WMF pixels:", err)
 				}
 				if err := comparePixels(ours, oracle, 3, .01); err != nil {
-					if !strings.Contains(string(version), "24.2.7.2") {
+					if !strings.Contains(version, "24.2.7.2") {
 						t.Fatal(err, "artifacts:", dir)
 					}
 					for y := 0; y < 32; y++ {
@@ -357,12 +436,48 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 							}
 						}
 					}
-					t.Log("known LibreOffice 24.2.7.2 WMF bitmap import produces a blank graphic; POI matches the generated/library pixels. Excluded from LibreOffice agreement.")
+					t.Log("known LibreOffice 24.2.7.2 behavior: a DISKMETAFILE-typed WMF renders blank; POI matches the generated/library pixels and bitmap-memory.wmf checks LibreOffice agreement.")
 				}
 			} else if err := comparePixels(ours, oracle, 3, .01); err != nil {
 				t.Fatal(err, "artifacts:", dir)
 			}
 		})
 	}
+	for _, s := range renderScenes() {
+		t.Run(s.name, func(t *testing.T) {
+			dir := filepath.Join(work, s.name)
+			oracle := libreOfficeRender(t, dir, s.name, s.data, 96, 64)
+			ours, err := playRender(s.data, 96, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writePNG(t, filepath.Join(dir, "gowemf.png"), ours)
+			writePNG(t, filepath.Join(dir, "comparison.png"), montage(ours, oracle, diffImage(ours, oracle)))
+			for _, p := range s.probes {
+				if err := probeColor(ours, p); err != nil {
+					t.Error("playback:", err)
+				}
+			}
+			if s.divergence == "" {
+				bad, total, _ := neighborhoodMismatch(ours, oracle, sceneDelta, 1)
+				t.Logf("unmatched pixels: %d/%d", bad, total)
+				if err := compareNeighborhood(ours, oracle, sceneDelta, 1, sceneBadFraction); err != nil {
+					t.Error(err, "artifacts:", dir)
+				}
+				return
+			}
+			// Observed with LibreOffice 24.2.7.2. Any version must still show
+			// the recorded pixels; a change requires reviewing ORACLES.md.
+			for _, p := range s.libreOffice {
+				if err := probeColor(oracle, p); err != nil {
+					t.Errorf("LibreOffice %s behavior changed (%s); review the pinned divergence: %v", version, s.divergence, err)
+				}
+			}
+			t.Logf("known LibreOffice divergence: %s", s.divergence)
+		})
+	}
 	t.Log("render artifacts:", work)
 }
+
+// Agreement tolerance for generated playback scenes; see compareNeighborhood.
+const sceneDelta, sceneBadFraction = 40, 0.005

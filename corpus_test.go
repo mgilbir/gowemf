@@ -144,15 +144,15 @@ func TestExternalCorpus(t *testing.T) {
 			}
 			// EMF+ playback must likewise finish, reporting every omission.
 			skipped = make(map[string]int)
-			native := &recordingBackend{}
+			native := &fakeText{}
 			options.Stream.PreferGDI = false
 			if _, err := Play(b, options, native); err != nil {
 				t.Fatal("EMF+ playback:", err)
 			}
-			if native.bad != nil {
-				t.Fatal("EMF+ playback geometry:", native.bad)
+			if native.recordingBackend.bad != nil {
+				t.Fatal("EMF+ playback geometry:", native.recordingBackend.bad)
 			}
-			t.Logf("EMF+ playback: %d fills, %d strokes, %d images; unsupported: %v", len(native.fills), len(native.strokes), len(native.images), skipped)
+			t.Logf("EMF+ playback: %d fills, %d strokes, %d images, %d text runs; unsupported: %v", len(native.fills), len(native.strokes), len(native.images), len(native.drawn), skipped)
 		})
 	}
 }

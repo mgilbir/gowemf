@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // EMF+ fixtures are written field by field from MS-EMFPLUS.
@@ -686,7 +687,7 @@ func TestPlayEMFPlusUnsupported(t *testing.T) {
 	font := plusObj(1, 6, dwords(plusVersion), fl(12), dwords(2, 0, 0, 1), words('A', 0))
 	text := plusRec(PlusDrawStringRecord, 0x8001, dwords(0xff000000, 0xffffffff, 1), fl(0, 0, 50, 20), words('A', 0))
 	b, skipped := plusPlay(t, plusScene(96, 64, font, text, fillRect(0xff000000, 0, 0, 1, 1)), PlayOptions{})
-	if len(skipped) != 1 || skipped[0] != "EMF+ text output" || len(b.fills) != 1 {
+	if len(skipped) != 1 || skipped[0] != "EMF+ DrawString layout" || len(b.fills) != 1 {
 		t.Fatal(skipped)
 	}
 	if _, err := Play(plusScene(96, 64, font, text), PlayOptions{Destination: Box{Width: 96, Height: 64}}, &recordingBackend{}); !errors.Is(err, ErrUnsupported) {
@@ -696,4 +697,131 @@ func TestPlayEMFPlusUnsupported(t *testing.T) {
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "Clear") {
 		t.Fatal(skipped)
 	}
+}
+
+func plusFontObj(id uint8, em float64, unit, style uint32, family string) []byte {
+	units := utf16.Encode([]rune(family))
+	name := make([]byte, 2*len(units))
+	for i, u := range units {
+		put16(name, 2*i, u)
+	}
+	return plusObj(id, 6, dwords(plusVersion), fl(em), dwords(unit, style, 0, uint32(len(units))), name)
+}
+
+// driverString writes EmfPlusDrawDriverString with a solid color; positions
+// holds x, y pairs and matrix, when non-nil, the six transform elements.
+func driverString(font uint8, argb, options uint32, text []uint16, positions, matrix []float64) []byte {
+	glyphs := make([]byte, 2*len(text))
+	for i, u := range text {
+		put16(glyphs, 2*i, u)
+	}
+	present, m := uint32(0), []byte(nil)
+	if matrix != nil {
+		present, m = 1, fl(matrix...)
+	}
+	return plusRec(PlusDrawDriverStringRecord, 0x8000|uint16(font), dwords(argb, options, present, uint32(len(text))), glyphs, fl(positions...), m)
+}
+
+func TestPlayEMFPlusDriverString(t *testing.T) {
+	half := plusRec(PlusSetPixelOffsetModeRecord, 4)
+	ab := utf16.Encode([]rune("AB"))
+	play := func(t *testing.T, records ...[]byte) (*fakeText, []string) {
+		t.Helper()
+		var skipped []string
+		b := &fakeText{}
+		o := PlayOptions{Destination: Box{Width: 96, Height: 64}, Unsupported: func(u UnsupportedOperation) error {
+			skipped = append(skipped, u.Reason)
+			return nil
+		}}
+		if _, err := Play(plusScene(96, 64, append([][]byte{half}, records...)...), o, b); err != nil {
+			t.Fatal(err)
+		}
+		if b.recordingBackend.bad != nil {
+			t.Fatal(b.recordingBackend.bad)
+		}
+		return b, skipped
+	}
+	// Bold underlined 16-pixel Liberation Sans, code units at explicit
+	// baseline origins.
+	b, skipped := play(t, plusFontObj(1, 16, 2, 1|4, "Liberation Sans"), driverString(1, 0xff102030, 1, ab, []float64{10, 20, 25, 21}, nil))
+	if len(skipped) != 0 || len(b.drawn) != 1 {
+		t.Fatal(skipped, b.drawn)
+	}
+	run := b.drawn[0]
+	f := run.Font
+	if f.FaceName != "Liberation Sans" || f.Height != -16 || f.Weight != 700 || !f.Underline || f.Italic || f.StrikeOut || f.CharSet != 1 {
+		t.Fatalf("font %+v", f)
+	}
+	if run.Glyphs || !pointsNear(run.Origins, Point{10, 20}, Point{25, 21}) || run.Advances[0] != 15 || run.Advances[1] != 8 || run.Transform != Identity() || run.Paint.Color != (color.NRGBA{0x10, 0x20, 0x30, 0xff}) {
+		t.Fatalf("run %+v", run)
+	}
+	// Glyph indexes, and realized advances from the first position.
+	b, _ = play(t, plusFontObj(1, 16, 2, 2|8, "F"), driverString(1, 0xff000000, 4, []uint16{36, 37, 38}, []float64{10, 20}, nil))
+	run = b.drawn[0]
+	if !run.Glyphs || !run.Font.Italic || !run.Font.StrikeOut || run.Font.Weight != 400 || !pointsNear(run.Origins, Point{10, 20}, Point{18, 20}, Point{26, 20}) {
+		t.Fatalf("realized advance %+v", run)
+	}
+	// Physical font sizes convert through the header's vertical DPI (120)
+	// into page units; World sizes are world units. The world transform
+	// applies to the text space either way.
+	scale := plusRec(PlusSetWorldTransformRecord, 0, fl(2, 0, 0, 2, 0, 0))
+	for _, c := range []struct {
+		records []byte
+		height  float64
+	}{
+		{plusFontObj(1, 12, 3, 0, "F"), -20},
+		{cat(plusFontObj(1, 12, 3, 0, "F"), plusRec(PlusSetPageTransformRecord, 4, fl(2))), -20. / 240},
+		{cat(plusFontObj(1, 1, 6, 0, "F"), plusRec(PlusSetPageTransformRecord, 6, fl(0.5))), -2},
+		{plusFontObj(1, 7, 0, 0, "F"), -7},
+	} {
+		recs := append(emfSplitPlus(c.records), scale, driverString(1, 0xff000000, 1, ab, []float64{0, 0, 1, 0}, nil))
+		b, skipped = play(t, recs...)
+		if len(skipped) != 0 || math.Abs(b.drawn[0].Font.Height-c.height) > 1e-9 || b.drawn[0].Transform.M11 == 1 {
+			t.Errorf("font height %v, want %v (%v)", b.drawn[0].Font.Height, c.height, skipped)
+		}
+	}
+	// A translation matrix moves the run; other matrices are reported.
+	b, _ = play(t, plusFontObj(1, 16, 2, 0, "F"), driverString(1, 0xff000000, 1, ab, []float64{10, 20, 25, 20}, []float64{1, 0, 0, 1, 5, -3}))
+	if !pointsNear([]Point{b.drawn[0].Transform.Apply(b.drawn[0].Origins[0])}, Point{15, 17}) {
+		t.Fatal("translated run", b.drawn[0].Transform)
+	}
+	// The translation is in world space, before the world transform.
+	b, _ = play(t, plusFontObj(1, 16, 2, 0, "F"), scale, driverString(1, 0xff000000, 1, ab, []float64{10, 20, 25, 20}, []float64{1, 0, 0, 1, 5, -3}))
+	if !pointsNear([]Point{b.drawn[0].Transform.Apply(b.drawn[0].Origins[0])}, Point{30, 34}) {
+		t.Fatal("translated run under a world transform", b.drawn[0].Transform)
+	}
+	// A brush object paints the text.
+	b, _ = play(t, plusFontObj(1, 16, 2, 0, "F"), plusObj(2, 1, linearBrush(0, 0, [4]float64{0, 0, 10, 10}, 0xff000000, 0xffffffff)), plusRec(PlusDrawDriverStringRecord, 1, dwords(2, 1, 0, 1), words('A'), fl(1, 1)))
+	if b.drawn[0].Paint.Kind != PaintLinearGradient {
+		t.Fatal("text brush", b.drawn[0].Paint)
+	}
+	for _, c := range []struct {
+		records [][]byte
+		reason  string
+	}{
+		{[][]byte{plusFontObj(1, 16, 2, 0, "F"), driverString(1, 0xff000000, 1, ab, []float64{0, 0, 1, 0}, []float64{2, 0, 0, 1, 0, 0})}, "transform other than a translation"},
+		{[][]byte{plusFontObj(1, 16, 2, 0, "F"), driverString(1, 0xff000000, 1|2, ab, []float64{0, 0, 1, 0}, nil)}, "vertical"},
+		{[][]byte{plusFontObj(1, 16, 1, 0, "F"), driverString(1, 0xff000000, 1, ab, []float64{0, 0, 1, 0}, nil)}, "font size unit"},
+		{[][]byte{plusFontObj(1, 16, 2, 0, "F"), plusRec(PlusDrawStringRecord, 0x8001, dwords(0xff000000, 0xffffffff, 1), fl(0, 0, 50, 20), words('A', 0))}, "DrawString"},
+	} {
+		if _, skipped := play(t, c.records...); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
+			t.Errorf("%s: %v", c.reason, skipped)
+		}
+	}
+	// Without a text backend, text is reported.
+	_, skipped = plusPlay(t, plusScene(96, 64, plusFontObj(1, 16, 2, 0, "F"), driverString(1, 0xff000000, 1, ab, []float64{0, 0, 1, 0}, nil)), PlayOptions{})
+	if len(skipped) != 1 || skipped[0] != "text output" {
+		t.Fatal(skipped)
+	}
+}
+
+// emfSplitPlus splits concatenated EMF+ records.
+func emfSplitPlus(blob []byte) [][]byte {
+	var out [][]byte
+	for len(blob) >= 12 {
+		n := int(u32(blob[4:]))
+		out = append(out, blob[:n])
+		blob = blob[n:]
+	}
+	return out
 }

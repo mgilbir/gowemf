@@ -153,8 +153,13 @@ func (p *player) plusDispatch(c Command) error {
 		return p.plusCurve(c, body.(PlusCurve))
 	case PlusDrawImageRecord, PlusDrawImagePointsRecord:
 		return p.plusImage(c, body.(PlusImageDraw))
-	case PlusDrawStringRecord, PlusDrawDriverStringRecord:
-		return p.unsupported(r, "EMF+ text output")
+	case PlusDrawDriverStringRecord:
+		return p.plusDriverString(c, body.(PlusDriverString))
+	case PlusDrawStringRecord:
+		// MS-EMFPLUS leaves GDI+ string layout open: the unit of the default
+		// 1/6 margins, how the 1.03 default tracking applies, line breaking,
+		// trimming and line spacing.
+		return p.unsupported(r, "EMF+ DrawString layout")
 	case PlusSetRenderingOriginRecord:
 		s.origin = body.(PointRecord).Point
 	case PlusSetInterpolationModeRecord:

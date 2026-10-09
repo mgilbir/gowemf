@@ -350,6 +350,24 @@ has its own pinned scene. Further pinned text divergences:
 | `lo-text-updatecp-right.emf` | TA_RIGHT with TA_UPDATECP leaves the position at the right end | Position moves to the string's left end |
 | `lo-text-world-stretch.emf` | Glyphs not stretched by an anisotropic GM_ADVANCED world transform | Glyphs follow the full transform (MS-EMF 2.1.16) |
 
+EMF+ driver strings are compared in the same text harness:
+- `plus-driver.emf`: code units at explicit origins.
+- `plus-driver-world.emf`: a point-sized font under a rotated world transform,
+  with a translation matrix.
+
+Both agree with LibreOffice and carry hand-derived ink probes.
+`lo-plus-driver-glyphs.emf` pins a divergence: LibreOffice 24.2.7.2 draws
+nothing for glyph-index driver strings (without DriverStringOptionsCmapLookup),
+while playback hands the indexes to the backend.
+
+LibreOffice applies a non-translation driver-string matrix to the glyph shapes
+and the first position only; playback reports such matrices instead of
+adopting that reading. Fourteen planted driver-string defects were each caught
+by the offline tests, and the five that change the scenes also fail the
+LibreOffice comparison. They covered font units and page scale, styles,
+glyph/code-unit selection, realized advances, matrix order and sign, vertical
+and matrix reporting, decoration extents and the brush.
+
 ## Decoder and playback extensions
 
 TIFF parsing follows the TIFF 6.0 structure, strip, PackBits, LZW, predictor and

@@ -56,7 +56,7 @@ func TestLibreOfficeText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range append(textScenes(), wmfScenes()...) {
+	for _, s := range append(append(textScenes(), wmfScenes()...), plusTextScenes(face)...) {
 		t.Run(s.name, func(t *testing.T) {
 			dir := filepath.Join(work, s.name)
 			lo := oracle.LibreOffice(t, dir, s.name, s.data, 192, 96)

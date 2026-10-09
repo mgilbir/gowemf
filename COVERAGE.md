@@ -289,7 +289,7 @@ played by the GDI player, with its own device context.
 | Pens | World and Pixel widths, pen transform, flat/square/round caps, miter/bevel/round joins, miter limit, predefined and custom dashes with offset, any supported brush | Compound pens, custom, anchor, triangle and mixed caps, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
 | Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
-| Text | — | DrawString and DrawDriverString |
+| Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
 
 Interpretations where MS-EMFPLUS leaves room:
 
@@ -320,6 +320,19 @@ Interpretations where MS-EMFPLUS leaves room:
 - SourceCopy compositing replaces pixels. That equals source-over for opaque
   paint, which is drawn; translucent paint is reported. Clear requires an
   opaque color for the same reason.
+- EMF+ font sizes in World units are world units. Physical sizes are converted
+  to device pixels with the header's vertical DPI and then to page units, so
+  the world transform still scales and rotates text. Fonts are requested with
+  a negative LOGFONT height (the em) and DEFAULT_CHARSET.
+- A driver-string matrix is "applied to each value in the text array"
+  (MS-EMFPLUS 2.3.4.6), which does not settle whether it moves the positions,
+  the glyphs or both. Translations give the same result under every reading
+  and are applied in world space; other matrices are reported. Decoration
+  extents run from the first origin to the last origin plus that glyph's
+  measured advance.
+- DrawString is reported. Its layout depends on rules MS-EMFPLUS leaves open:
+  the unit of the default 1/6 margins, how the 1.03 default tracking applies,
+  line breaking, trimming and line spacing.
 - Bitmap images decode once per object definition and are charged to the
   playback pixel budget then: the declared size first, then any excess of the
   decoded size. Region trees are converted to depth 256 at most. Clip steps

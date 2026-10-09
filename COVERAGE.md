@@ -177,18 +177,20 @@ color-object lifetimes are handled without mutating previously emitted snapshots
 
 ## GDI playback
 
-`Play` interprets the WMF and EMF GDI streams; EMF+ files play only their Dual
-GDI fallback on request. Coverage of each family:
+`Play` interprets the WMF and EMF GDI streams, and the GDI records inside EMF+
+GetDC intervals. EMF+ playback is described in the next section. Coverage of
+each GDI family:
 
 | Family | Played | Reported as unsupported |
 | --- | --- | --- |
 | State | SaveDC/RestoreDC (relative and WMF absolute), map modes 1–8, window/viewport origin/extent/offset/scale, Set/ModifyWorldTransform (all four modes), background mode/color, poly-fill mode, ROP2, stretch mode, arc direction, miter limit, brush origin, current position | Right-to-left layout; ICM conversion with a non-sRGB source, output profile or proofing target |
-| Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch and DIB pattern brushes, stock objects including DC_PEN/DC_BRUSH defaults, WMF lowest-free-slot reuse, EMF handle reuse | Monochrome and Bitmap16 pattern brushes, DIB pattern pens, dithered hatch styles, palette-relative COLORREFs and DIB colors, selecting a WMF region |
+| Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch, DIB and monochrome pattern brushes (EMR_CREATEMONOBRUSH and 1-bit Bitmap16 patterns), stock objects including DC_PEN/DC_BRUSH defaults, logical palettes (create, select, set, animate, resize) with PALETTEINDEX and PALETTERGB colors and DIB_PAL_COLORS bitmaps, WMF lowest-free-slot reuse, EMF handle reuse | Colored Bitmap16 patterns, DIB pattern pens, dithered hatch styles, DIB_PAL_INDICES bitmaps, palettes after EMR_COLORCORRECTPALETTE, PALETTEINDEX with the default palette |
 | Geometry | Polygons/polylines/polypolygons/polypolylines (16/32-bit), Bézier and "To" forms, PolyDraw, LineTo/MoveTo, Rectangle, RoundRect, Ellipse, Arc/ArcTo/Chord/Pie, AngleArc, SetPixel | — |
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
-| Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, save/restore | WMF SelectClipRegion |
+| Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, WMF SelectClipRegion and region SelectObject, save/restore | — |
 | Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY, halftone with a color adjustment |
-| Text and fills | Empty ETO_OPAQUE ExtTextOut, which fills its rectangle with the background color | Glyph output, PolyTextOut, region painting, flood fill, gradient fill |
+| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; right-to-left reading order; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
+| Fills | FillRgn, PaintRgn, FrameRgn; WMF FillRegion, PaintRegion, FrameRegion; EMR_GRADIENTFILL rectangle and triangle modes through a `GradientBackend` | InvertRgn and InvertRegion and flood fill, which read the destination; gradients for backends without `GradientBackend` |
 
 Interpretations where the specifications leave room or conflict:
 
@@ -229,6 +231,40 @@ Interpretations where the specifications leave room or conflict:
 - ROP3 operations are classified by their index byte. SRCCOPY ignores DIB
   alpha. PolyDraw, PolylineTo and the "To" records continue from the current
   position, starting a new figure after a closed one.
+- Text placement: EMF text records state their own graphics mode, which
+  selects GM_COMPATIBLE (device space, upright, only the height scaled by the
+  y-axis and advances by the x-axis) or GM_ADVANCED (world space, full
+  transform, orientation relative to the escapement); WMF is GM_COMPATIBLE.
+  The string extent for alignment and TA_UPDATECP is the sum of the advances
+  used. With TA_UPDATECP the position moves to the string's end in its drawing
+  direction: forward for TA_LEFT, back for TA_RIGHT, unchanged for TA_CENTER.
+  Character extra and justification apply only without explicit advances and
+  are rounded to device pixels under GM_COMPATIBLE; break extra goes to U+0020,
+  with any remainder one unit at a time to the first breaks. The WMF character
+  extra is read as signed, as GDI's SetTextCharacterExtra takes it, although
+  MS-WMF 2.3.5.25 describes the field as unsigned. Symbol-charset bytes map to
+  U+F000+byte, the private-use range symbol fonts' Windows cmaps use. Charsets
+  map to code pages as Windows' TranslateCharsetInfo documents.
+- Palette entries are read as GDI PALETTEENTRY values (red, green, blue,
+  flags), as MS-WMF 2.2.2.13 specifies. MS-EMF 2.2.18 draws LogPaletteEntry as
+  reserved, blue, green, red, which is that structure read as a most-
+  significant-first DWORD; Apache POI follows the drawing (see ORACLES.md).
+  Palette updates modify the palette object in place, so every selection of it
+  sees them. AnimatePalette changes only PC_RESERVED entries. COLORREF's
+  reserved byte must be zero (MS-WMF 2.2.2.8); GDI's PALETTEINDEX (0x01) and
+  PALETTERGB (0x02) forms are resolved through the selected logical palette and
+  as plain RGB on a true-color device. Palette entry allocations share the
+  playback pixel budget.
+- Monochrome pattern brushes draw clear bits in the text color and set bits in
+  the background color, as GDI's CreatePatternBrush documents; the DIB's own
+  color table and Usage are ignored.
+- Region data is in logical units, as for ExtSelectClipRgn; WMF scans are
+  logical (MS-WMF 2.2.2.21). FrameRgn draws R minus R eroded by the brush box,
+  computed exactly as R intersected with R's complement dilated by that box;
+  the band sweep is charged to a 16,000,000-step budget per Play call.
+- Rectangle gradients become two triangles whose shading is exactly linear
+  along the gradient axis; triangle gradients interpolate in destination
+  space. TriVertex alpha is ignored (MS-EMF 2.2.26). Colors keep 16 bits.
 - GDI's integer pixel rules beyond edge exclusion belong to the backend.
   `Stroke.PixelCenter` gives half a device pixel in destination units for
   backends that center lines on device pixels, as GDI does.
@@ -238,6 +274,110 @@ pattern grid; their pixel patterns are drawn by the backend. Path and clip
 geometry is retained in destination coordinates, so a path survives transform
 changes made after it is recorded. Each clip step is an immutable node shared by
 saved states; the chain length is bounded across the clip and metaregions.
+
+## EMF+ playback
+
+`Play` interprets EMF+ records by default; `StreamOptions.PreferGDI` selects
+the GDI fallback of a Dual file instead. GDI records inside GetDC intervals are
+played by the GDI player, with its own device context.
+
+| Family | Played | Reported as unsupported |
+| --- | --- | --- |
+| State | Save/Restore, BeginContainer (World or Pixel units) and BeginContainerNoParams, EndContainer; Set/Reset/Multiply/Translate/Scale/RotateWorldTransform in prepend and append order; SetPageTransform in Pixel, Point, Inch, Document and Millimeter units; pixel offset, interpolation and compositing modes; rendering origin. Anti-aliasing, text hints and compositing quality are backend policy. | Display and World page units; containers in physical units (their contents are skipped as a unit); SetTSGraphics and SetTSClip |
+| Clipping | SetClipRect, SetClipPath, SetClipRegion with all six combine modes; region trees with every node type; ResetClip, OffsetClip; container clips as metaregions | — |
+| Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, brush transform, clamped) | Hatch styles 6–52, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors, preset colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
+| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (an unverified interpretation; see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
+| Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
+| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
+| Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
+
+Interpretations where MS-EMFPLUS leaves room:
+
+- World coordinates map to EMF device pixels through the world, container and
+  page transforms. Page units convert with the EMF+ header's logical DPI. With
+  no SetPageTransform the page is one device pixel per unit at scale 1.
+- Under PixelOffsetMode Default, HighSpeed and None, integer device
+  coordinates are pixel centers (MS-EMFPLUS 2.1.1.26). All geometry, clipping
+  and images shift by half a device pixel; Half and HighQuality do not.
+- A container maps its source rectangle onto its destination rectangle in the
+  enclosing world space. The world transform and clip start reset, and the
+  enclosing clip constrains drawing as a metaregion.
+- EmfPlusPath carries no fill mode, so FillPath, path clips and path region
+  nodes use GDI+'s default alternate rule. FillPolygon is alternate, and
+  FillClosedCurve follows its winding flag.
+- Pie and arc angles are clockwise from the x axis to the ray through the
+  point, so elliptical arcs use geometric, not parametric, angles. Sweeps are
+  limited to ±360 degrees. An empty DrawArc draws nothing.
+- Cardinal spline segments become Béziers whose control points are offset by
+  tension/3 of the neighboring chord; open curves repeat their end points.
+- Linear gradients run from the left edge (0) to the right edge (1) of the
+  brush rectangle in brush space, which the brush transform places in world
+  space. Blend factors are fractions of the end color, interpolated linearly
+  in sRGB.
+- World-unit pen widths follow the pen and world transforms. Pixel-unit widths
+  are device pixels. A zero width is a hairline. Unset miter limits are 10,
+  GDI+'s default.
+- Line caps follow MS-EMFPLUS 2.1.1.17 where it gives the geometry: Flat,
+  Square, Round, NoAnchor (ends at the last point, like Flat) and
+  SquareAnchor (a square of the line width centered on the end, like Square).
+  The triangle's height and the other anchors' sizes are not given. Neither
+  MS-EMFPLUS nor Microsoft's GDI+ reference gives the coordinate system of
+  custom cap paths or where an adjustable arrow's vertex sits, so those caps
+  are reported unless `PlayOptions.CustomLineCaps` opts into an interpretation
+  that has not been checked against Windows:
+  - Cap space has its origin at the figure's end. +y points outward along
+    the line (back along the first segment for a start cap), and +x is +y
+    turned a quarter clockwise in pen space. Units are the pen width times
+    the cap's WidthScale.
+  - Path caps fill their fill path with the winding rule, or stroke their
+    line path with the pen width and the cap's stroke caps and join. The line
+    path wins when both are present, as Microsoft's CustomLineCap reference
+    states. The figure ends with BaseCap, shortened by BaseInset.
+  - An adjustable arrow has its vertex at the end. Its base is Width units
+    across and Height units back, with its midpoint moved MiddleInset units
+    toward the vertex (Microsoft's AdjustableArrowCap reference). It is
+    filled, or outlined when FillState is clear, and the figure ends flat at
+    the base midpoint.
+  - Translucent paint is reported, because how GDI+ composites a cap over
+    the line it overlaps is unknown. A dashed pen's line caps apply at figure ends and its dash
+  cap at dash ends, which Stroke cannot express apart; dashed pens therefore
+  need flat line caps.
+- Compound lines (MS-EMFPLUS 2.2.2.9) are parallel bands across the pen
+  width. Which side fraction 0 lies on is not specified, so only symmetric
+  arrays are drawn, and how bands meet at bevel and round joins is not either.
+  With miter joins, each band is exactly the full-width mitered stroke at its
+  outer edge minus the one at its inner edge, provided no corner exceeds the
+  miter limit (where GDI+ would bevel); Play checks every corner, and requires
+  flat caps on open figures.
+- A path gradient (MS-EMFPLUS 2.2.2.29) changes color along each line from
+  the center to the boundary. For a boundary that is star-shaped from the
+  center this is exactly a fan of Gouraud triangles from the center, which Play
+  delivers to a `GradientBackend` with the filled shape as a final clip layer;
+  WrapModeClamp leaves the area outside the boundary unpainted. Surrounding
+  colors belong to the boundary vertices, or one color to all. Point
+  boundaries are closed cardinal splines of unstated tension; blend positions
+  are described only as running from a "midpoint" to an "endpoint"; focus
+  scales give no scaling origin. Those are reported.
+- SourceCopy compositing replaces pixels. That equals source-over for opaque
+  paint, which is drawn; translucent paint is reported. Clear requires an
+  opaque color for the same reason.
+- EMF+ font sizes in World units are world units. Physical sizes are converted
+  to device pixels with the header's vertical DPI and then to page units, so
+  the world transform still scales and rotates text. Fonts are requested with
+  a negative LOGFONT height (the em) and DEFAULT_CHARSET.
+- A driver-string matrix is "applied to each value in the text array"
+  (MS-EMFPLUS 2.3.4.6), which does not settle whether it moves the positions,
+  the glyphs or both. Translations give the same result under every reading
+  and are applied in world space; other matrices are reported. Decoration
+  extents run from the first origin to the last origin plus that glyph's
+  measured advance.
+- DrawString is reported. Its layout depends on rules MS-EMFPLUS leaves open:
+  the unit of the default 1/6 margins, how the 1.03 default tracking applies,
+  line breaking, trimming and line spacing.
+- Bitmap images decode once per object definition and are charged to the
+  playback pixel budget then: the declared size first, then any excess of the
+  decoded size. Region trees are converted to depth 256 at most. Clip steps
+  share the PlayOptions bound.
 
 ## Pixel decoding
 
@@ -309,8 +449,10 @@ playback, TIFF and ICC color transform integration. Generated color tests includ
 to-sRGB expectations, alpha preservation, and concurrent backend calls.
 The pinned corpus and POI comparisons are described in ORACLES.md. Passing them
 does not establish full specification conformance or render equivalence. Linux
-render comparisons cover generated raster transfers, TIFFs and GDI playback
-scenes for paths, transforms, mapping modes, objects, clipping and bitmaps, but
-not text. Known LibreOffice divergences are pinned separately in ORACLES.md.
+render comparisons cover generated raster transfers, TIFFs, GDI playback
+scenes for paths, transforms, mapping modes, objects, clipping, bitmaps, fills
+and text, and EMF+ playback scenes for shapes, transforms, containers,
+clipping, pens, curves, gradients and images. Known LibreOffice divergences
+are pinned separately in ORACLES.md.
 Playback unit tests and offline scene probes check spec-derived geometry and
 pixels in `make check`; the pinned corpus must play with every omission reported.

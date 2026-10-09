@@ -126,6 +126,33 @@ func TestExternalCorpus(t *testing.T) {
 			if len(backend.fills)+len(backend.strokes)+len(backend.images) == 0 {
 				t.Fatal("playback produced no drawing operations")
 			}
+			// With a text backend and an explicitly stated system charset,
+			// text is laid out rather than reported.
+			text := &fakeText{}
+			ansi := uint8(0)
+			skipped = make(map[string]int)
+			options.DefaultCharSet = &ansi
+			if _, err := Play(b, options, text); err != nil {
+				t.Fatal("text playback:", err)
+			}
+			if text.recordingBackend.bad != nil {
+				t.Fatal("text playback geometry:", text.recordingBackend.bad)
+			}
+			t.Logf("text playback: %d runs; unsupported: %v", len(text.drawn), skipped)
+			if h.EMFPlus == nil {
+				return
+			}
+			// EMF+ playback must likewise finish, reporting every omission.
+			skipped = make(map[string]int)
+			native := &fakeText{}
+			options.Stream.PreferGDI = false
+			if _, err := Play(b, options, native); err != nil {
+				t.Fatal("EMF+ playback:", err)
+			}
+			if native.recordingBackend.bad != nil {
+				t.Fatal("EMF+ playback geometry:", native.recordingBackend.bad)
+			}
+			t.Logf("EMF+ playback: %d fills, %d strokes, %d images, %d text runs; unsupported: %v", len(native.fills), len(native.strokes), len(native.images), len(native.drawn), skipped)
 		})
 	}
 }

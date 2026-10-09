@@ -41,17 +41,24 @@ type PaintKind uint8
 const (
 	PaintSolid PaintKind = iota + 1
 	// PaintHatch draws Color in an 8x8 device-pixel hatch selected by Hatch
-	// (HS_HORIZONTAL=0 through HS_DIAGCROSS=5). Background is the opaque
-	// background color, or nil for TRANSPARENT background mode.
+	// (HS_HORIZONTAL=0 through HS_DIAGCROSS=5). Background is the background
+	// color, or nil for TRANSPARENT background mode. GDI colors are opaque;
+	// EMF+ hatch colors may be translucent.
 	PaintHatch
-	// PaintPattern tiles Pattern, which is opaque.
+	// PaintPattern repeats Pattern as Wrap describes. GDI patterns are opaque
+	// and tiled; EMF+ texture brushes may carry alpha and other wrap modes.
 	PaintPattern
+	// PaintLinearGradient is an EMF+ linear gradient brush, in Gradient.
+	PaintLinearGradient
 )
 
 // Paint is an effective brush or pen color after ROP2 and background mode
 // resolution. Colors are straight-alpha sRGB values; GDI colors are opaque.
-// For hatches and patterns, PatternTransform maps device-pixel pattern space,
-// anchored at the brush origin, to destination coordinates.
+// For hatches and patterns, PatternTransform maps pattern space to
+// destination coordinates. GDI hatch and pattern space is in device pixels
+// anchored at the brush origin; EMF+ hatches are anchored at the rendering
+// origin, and EMF+ texture space is the image's pixel grid placed by the brush
+// and world transforms.
 type Paint struct {
 	Kind             PaintKind
 	Color            color.NRGBA
@@ -59,6 +66,38 @@ type Paint struct {
 	Background       *color.NRGBA
 	Pattern          image.Image
 	PatternTransform Matrix
+	Wrap             WrapMode
+	Gradient         *LinearGradient
+}
+
+// WrapMode is how a pattern or gradient continues outside its tile
+// (MS-EMFPLUS 2.1.1.34). WrapClamp paints nothing outside a pattern tile.
+type WrapMode uint8
+
+const (
+	WrapTile WrapMode = iota
+	WrapTileFlipX
+	WrapTileFlipY
+	WrapTileFlipXY
+	WrapClamp
+)
+
+// GradientStop is a color at an offset in [0,1] along a gradient.
+type GradientStop struct {
+	Offset float64
+	Color  color.NRGBA
+}
+
+// LinearGradient is an EMF+ linear gradient. Transform maps destination
+// coordinates to gradient space, where the x coordinate is the gradient
+// parameter: 0 at the start color and 1 at the end. Stops have ascending
+// offsets from 0 to 1 and interpolate linearly in sRGB between neighbors; all
+// stops share one alpha. Outside [0,1] the parameter repeats (WrapTile or
+// WrapTileFlipY) or mirrors (WrapTileFlipX or WrapTileFlipXY).
+type LinearGradient struct {
+	Transform Matrix
+	Stops     []GradientStop
+	Wrap      WrapMode
 }
 
 type LineCap uint8
@@ -79,6 +118,8 @@ const (
 // Dash styles are GDI pen styles. Predefined patterns are device dependent and
 // are left to the backend. DashUser lengths are in pen space for geometric
 // pens and in device pixels (2*PixelCenter destination units) for hairlines.
+// Stroke.DashOffset, in the same units, is how far into the pattern each
+// figure starts.
 const (
 	DashSolid DashStyle = iota + 1
 	DashDash
@@ -96,17 +137,32 @@ const (
 // Gap is the paint for gaps between dashes in OPAQUE background mode.
 // PixelCenter is half a device pixel in destination units: GDI rasterizes
 // lines through device pixel centers, so a backend emulating GDI pixels
-// translates stroke geometry by it. Fill geometry needs no such offset.
+// translates stroke geometry by it. Fill geometry needs no such offset. EMF+
+// strokes have a zero PixelCenter: their geometry already follows the EMF+
+// pixel offset mode.
+//
+// Cap applies to both ends of open figures unless EndCap is set, in which
+// case Cap is the start cap and EndCap the end cap (EMF+ pens only). A
+// non-empty Compound divides the pen across its width into parallel bands
+// (MS-EMFPLUS 2.2.2.9): pairs of fractions [a,b] of the width. Play passes
+// only arrays symmetric about the center, with miter joins, so each band is
+// exact as a difference of ordinary strokes: a band with b <= 1/2 covers the
+// stroke of width (1-2a)*Width minus the stroke of width (1-2b)*Width, and a
+// band containing the center covers the stroke of width (1-2a)*Width; open
+// figures then have flat caps and no dashes.
 type Stroke struct {
 	Paint       Paint
 	Hairline    bool
 	Width       float64
 	Transform   Matrix
 	Cap         LineCap
+	EndCap      LineCap
+	Compound    []float64
 	Join        LineJoin
 	MiterLimit  float64
 	Dash        DashStyle
 	Dashes      []float64
+	DashOffset  float64
 	Gap         *Paint
 	PixelCenter Point
 }
@@ -115,7 +171,8 @@ type Stroke struct {
 // coordinates (pixel x covers [x,x+1)) to destination coordinates and may
 // mirror, scale, rotate or shear. Pixels outside Source are not drawn. The
 // image is composited source-over with its alpha multiplied by Opacity.
-// Smooth is the HALFTONE interpolation hint. Image must not be modified.
+// Smooth is the interpolation hint: GDI's HALFTONE stretch mode, or an EMF+
+// interpolation mode other than NearestNeighbor. Image must not be modified.
 type ImageDraw struct {
 	Image     image.Image
 	Source    image.Rectangle
@@ -136,19 +193,24 @@ const (
 	ClipReplace
 	// ClipOffset translates Base by Offset; Area is unused.
 	ClipOffset
+	// ClipComplement keeps the operand minus Base (EMF+ CombineModeComplement).
+	ClipComplement
 )
 
-// ClipRegion is an immutable clipping step in destination coordinates. A nil
-// Base denotes the whole drawing surface, which is GDI's default clip region.
-// Nodes are shared by saved states and later steps; backends may cache derived
-// masks by pointer identity.
+// ClipRegion is an immutable clipping step in destination coordinates: the
+// region of Base combined by Op with its operand. The operand is Area under
+// Rule, or the region Operand when Operand is non-nil (EMF+ region trees). A
+// nil Base denotes the whole drawing surface, which is GDI's default clip
+// region. Nodes are shared by saved states and later steps; backends may cache
+// derived masks by pointer identity.
 type ClipRegion struct {
-	Base   *ClipRegion
-	Op     ClipOp
-	Area   Path
-	Rule   FillRule
-	Offset Point
-	depth  uint32
+	Base    *ClipRegion
+	Op      ClipOp
+	Area    Path
+	Rule    FillRule
+	Operand *ClipRegion
+	Offset  Point
+	depth   uint32
 }
 
 // Clip lists regions that all constrain drawing: metaregions followed by the
@@ -175,6 +237,16 @@ type UnsupportedOperation struct {
 // limits select defaults: 4,000,000 points per path, 64,000,000 cumulative
 // decoded bitmap pixels and 4,096 clip steps per region chain.
 //
+// DefaultCharSet is the CharacterSet that DEFAULT_CHARSET fonts resolve to on
+// the producing system; nil reports such ANSI text unsupported rather than
+// guessing a code page. Text is drawn only by backends implementing
+// TextBackend.
+//
+// CustomLineCaps draws EMF+ custom and adjustable-arrow line caps under an
+// interpretation that has not been verified against Windows, because neither
+// MS-EMFPLUS nor Microsoft's GDI+ reference defines their geometry (see
+// COVERAGE.md). When false, such caps are reported unsupported.
+//
 // Unsupported is called for each operation that cannot be drawn faithfully.
 // If it is nil, Play stops with an ErrUnsupported error. If it returns nil,
 // the operation is skipped; the caller then knows the output is incomplete.
@@ -184,22 +256,27 @@ type PlayOptions struct {
 	Destination    Box
 	Placeable      *PlaceableHeader
 	ColorTransform ColorTransformFactory
+	DefaultCharSet *uint8
 	MaxPathPoints  uint64
 	MaxImagePixels uint64
 	MaxClipSteps   uint32
+	CustomLineCaps bool
 	Unsupported    func(UnsupportedOperation) error
 }
 
 // errSkip marks an operation skipped with the Unsupported callback's consent.
 var errSkip = errors.New("gowemf: skipped unsupported operation")
 
-// Play replays the GDI stream of a WMF or EMF file through backend. It tracks
-// the playback device context (save/restore, mapping modes, window/viewport
-// and world transforms, selected objects, paths and clipping) and resolves
-// drawing records into destination-space operations. Text, region painting,
-// gradients, flood fill, EMF+ drawing and other unimplemented operations are
-// reported through PlayOptions.Unsupported; see COVERAGE.md for the inventory.
-// EMF+ Dual files play their GDI fallback only when Stream.PreferGDI is set.
+// Play replays a WMF, EMF or EMF+ file through backend. For GDI records it
+// tracks the playback device context (save/restore, mapping modes,
+// window/viewport and world transforms, selected objects, paths and
+// clipping); for EMF+ records, the GDI+ graphics state (world and page
+// transforms, containers, clipping and objects). It resolves drawing records
+// into destination-space operations. EMF+ files play their EMF+ records, plus
+// the GDI records inside GetDC intervals; Stream.PreferGDI selects the GDI
+// fallback of EMF+ Dual files instead. Flood fill, EMF+ text and other
+// unimplemented operations are reported through PlayOptions.Unsupported; see
+// COVERAGE.md for the inventory.
 //
 // Like Stream, backend calls can precede a later failure. Validate first with
 // Stream(data, options.Stream, nil) when output must be transactional.
@@ -224,9 +301,6 @@ func Play(data []byte, options PlayOptions, backend Backend) (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
-	if h.EMFPlus != nil && !options.Stream.PreferGDI {
-		return Header{}, failure(0, "EMF+ drawing playback", ErrUnsupported)
-	}
 	p := &player{options: options, backend: backend}
 	if err := p.start(h); err != nil {
 		return Header{}, err
@@ -249,7 +323,13 @@ type player struct {
 	path         *pathBuilder
 	constructing bool // inside BeginPath/EndPath
 	pixels       uint64
+	regionWork   uint64
 	generations  []uint64
+	// EMF+ playback state; plusDPI is the header's logical resolution.
+	plus        plusState
+	plusSaved   []plusSaved
+	plusObjects [64]plusObject
+	plusDPI     Point
 }
 
 func (p *player) start(h Header) error {
@@ -310,6 +390,10 @@ func (p *player) start(h Header) error {
 		return malformed(0, "playback frame scale")
 	}
 	p.generations = make([]uint64, len(p.objects))
+	p.plus = defaultPlusState()
+	if h.EMFPlus != nil {
+		p.plusDPI = Point{float64(h.EMFPlus.LogicalDpiX), float64(h.EMFPlus.LogicalDpiY)}
+	}
 	return nil
 }
 

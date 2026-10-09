@@ -1,4 +1,4 @@
-.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download test-external oracle-download test-oracle test-render
+.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download codepages-download codepages test-external oracle-download test-oracle test-render rendercheck-vet
 
 check: fmt-check build test vet race test-32
 
@@ -35,8 +35,14 @@ bench:
 corpus-download:
 	go run ./internal/corpusfetch
 
-test-external: corpus-download
-	GOWEMF_EXTERNAL=1 go test -run=TestExternalCorpus -count=1 -v .
+codepages-download:
+	go run ./internal/corpusfetch -codepages
+
+codepages: codepages-download
+	go run ./internal/codepagegen
+
+test-external: corpus-download codepages-download
+	GOWEMF_EXTERNAL=1 go test -run='TestExternalCorpus|TestCodePageTables' -count=1 -v .
 
 oracle-download:
 	go run ./internal/corpusfetch -oracle
@@ -48,3 +54,7 @@ test-oracle: corpus-download oracle-download
 test-render: oracle-download
 	javac -cp '.external/oracle/*' -d .external/oracle tools/POIBitmapRender.java
 	GOWEMF_RENDER=1 go test -run=TestLibreOfficeRenderOracle -count=1 -v .
+	cd rendercheck && GOWEMF_RENDER=1 go test -run=TestLibreOfficeText -count=1 -v .
+
+rendercheck-vet:
+	cd rendercheck && go vet ./...

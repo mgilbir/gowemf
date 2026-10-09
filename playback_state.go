@@ -12,19 +12,21 @@ type deviceContext struct {
 	mapMode                                        uint32
 	windowOrg, windowExt, viewportOrg, viewportExt Point
 	world                                          Matrix
-	pen, brush                                     objectRef
+	pen, brush, font                               objectRef
 	bkMode, polyFill, rop2, stretchMode, arcDir    uint32
-	layout, bkColor                                uint32
+	layout, bkColor, textColor, textAlign          uint32
+	charExtra, breakExtra, breakCount              int32
 	miterLimit                                     float64
 	brushOrg, position                             Point
 	clip                                           *ClipRegion
 	meta                                           []*ClipRegion
+	palette                                        paletteRef
 }
 
 func defaultDeviceContext() deviceContext {
 	return deviceContext{
 		mapMode: 1, windowExt: Point{1, 1}, viewportExt: Point{1, 1}, world: Identity(),
-		pen: stockRef(stockPen(0x00000000, false)), brush: stockRef(stockBrush(0, 0x00ffffff)),
+		pen: stockRef(stockPen(0x00000000, false)), brush: stockRef(stockBrush(0, 0x00ffffff)), font: stockRef(stockFonts[systemFont]),
 		bkMode: 2, polyFill: 1, rop2: 13, stretchMode: 1, arcDir: 1, bkColor: 0x00ffffff, miterLimit: 10,
 	}
 }
@@ -38,6 +40,7 @@ type objectRef struct {
 	stock      bool
 	pen        *gdiPen
 	brush      *gdiBrush
+	font       *gdiFont
 }
 
 func stockRef(v any) objectRef {
@@ -47,14 +50,18 @@ func stockRef(v any) objectRef {
 		r.pen = o
 	case *gdiBrush:
 		r.brush = o
+	case *gdiFont:
+		r.font = o
 	}
 	return r
 }
 
 type playObject struct {
-	pen    *gdiPen
-	brush  *gdiBrush
-	region bool
+	pen     *gdiPen
+	brush   *gdiBrush
+	font    *gdiFont
+	palette *gdiPalette
+	region  []Rect // WMF region object in logical units; nil if not a region
 }
 
 type gdiPen struct {
@@ -75,6 +82,8 @@ type gdiBrush struct {
 	info, bits, packed  []byte
 	usage               uint32
 	pattern             image.Image
+	mono                *monoPattern // monochrome pattern colored by the DC
+	monoDIB             bool         // EMR_CREATEMONOBRUSH, decoded on first use
 	unsupportedWhy      string
 }
 
@@ -155,7 +164,7 @@ func newPen(v Pen, extended bool) *gdiPen {
 	return g
 }
 
-func newBrush(r Record, v any) *gdiBrush {
+func newBrush(r Record, v any, limits DecodeLimits) *gdiBrush {
 	switch b := v.(type) {
 	case Brush:
 		g := &gdiBrush{style: b.Style, color: b.Color, hatch: b.Hatch}
@@ -168,16 +177,23 @@ func newBrush(r Record, v any) *gdiBrush {
 	case PatternBrush:
 		if r.Type == EMRCreateMonoBrush {
 			// Monochrome brushes take text/background colors from the DC.
-			return &gdiBrush{style: 5, unsupportedWhy: "monochrome pattern brush"}
+			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, monoDIB: true}
 		}
 		return &gdiBrush{style: 5, info: b.Info, bits: b.Bits, usage: b.Usage}
 	case PackedPatternBrush:
 		if b.Style == 3 {
-			return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+			// BS_PATTERN carries a Bitmap16 (MS-WMF 2.3.4.8).
+			bm, err := parseBitmap16(b.Data, limits)
+			if err != nil {
+				return &gdiBrush{style: 3, unsupportedWhy: "malformed Bitmap16 pattern brush"}
+			}
+			m, why := monoFromBitmap16(bm)
+			return &gdiBrush{style: 3, mono: m, unsupportedWhy: why}
 		}
 		return &gdiBrush{style: 5, packed: b.Data, usage: b.Usage}
 	case BitmapPatternBrush:
-		return &gdiBrush{style: 3, unsupportedWhy: "device-dependent Bitmap16 pattern brush"}
+		m, why := monoFromBitmap16(b.Bitmap)
+		return &gdiBrush{style: 3, mono: m, unsupportedWhy: why}
 	}
 	return nil
 }
@@ -265,32 +281,53 @@ func (p *player) restore(n int32) {
 	// Stream has already validated the level against its own saved count.
 	p.dc = p.saved[level]
 	p.saved = p.saved[:level]
-	p.dc.pen = p.valid(p.dc.pen, true)
-	p.dc.brush = p.valid(p.dc.brush, false)
+	p.revalidate()
 }
 
-func (p *player) valid(r objectRef, pen bool) objectRef {
-	if r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation {
-		return r
+// revalidate replaces selections whose object was deleted or whose slot was
+// reused with the default stock objects (MS-EMF 3.1.1.1).
+func (p *player) revalidate() {
+	live := func(r objectRef) bool {
+		return r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation
 	}
-	if pen {
-		return stockRef(stockPens[1])
+	if !live(p.dc.pen) {
+		p.dc.pen = stockRef(stockPens[1])
 	}
-	return stockRef(stockBrushes[0])
+	if !live(p.dc.brush) {
+		p.dc.brush = stockRef(stockBrushes[0])
+	}
+	if !live(p.dc.font) {
+		p.dc.font = stockRef(stockFonts[systemFont])
+	}
+	if s := p.dc.palette; s.selected && (uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation) {
+		p.dc.palette = paletteRef{}
+	}
 }
 
-func (p *player) create(r Record, id uint32, body any) {
+func (p *player) create(r Record, id uint32, body any) error {
 	var o playObject
 	switch v := body.(type) {
 	case Pen:
 		o.pen = newPen(v, r.Format == EMF && r.Type == EMRExtCreatePen)
 	case Brush, PatternBrush, PackedPatternBrush, BitmapPatternBrush:
-		o.brush = newBrush(r, v)
+		o.brush = newBrush(r, v, p.options.Stream.Decoding)
+	case Font:
+		o.font = newFont(v, r.Format)
+	case Palette:
+		entries, err := p.readEntries(r, v.Entries, v.Count)
+		if err != nil {
+			return err
+		}
+		o.palette = &gdiPalette{entries: entries}
 	case WMFRegion:
-		o.region = true
+		o.region = wmfRegionRects(v)
+		if o.region == nil {
+			o.region = []Rect{}
+		}
 	}
 	// Stream has checked the handle against the table size.
 	p.objects[id] = o
+	return nil
 }
 
 func (p *player) selectObject(r Record, id uint32) error {
@@ -305,19 +342,23 @@ func (p *player) selectObject(r Record, id uint32) error {
 			p.dc.brush = stockRef(stockBrushes[0]) // DC_BRUSH defaults to white
 		case n == 19:
 			p.dc.pen = stockRef(stockPens[1]) // DC_PEN defaults to black
+		case stockFonts[n] != nil:
+			p.dc.font = stockRef(stockFonts[n])
 		}
 		return nil
 	}
 	o := p.objects[id]
-	ref := objectRef{slot: id, generation: p.generations[id], pen: o.pen, brush: o.brush}
+	ref := objectRef{slot: id, generation: p.generations[id], pen: o.pen, brush: o.brush, font: o.font}
 	switch {
 	case o.pen != nil:
 		p.dc.pen = ref
 	case o.brush != nil:
 		p.dc.brush = ref
-	case o.region:
-		// Selecting a WMF region sets the clipping region.
-		return p.unsupported(r, "WMF region clipping")
+	case o.font != nil:
+		p.dc.font = ref
+	case o.region != nil:
+		// Selecting a WMF region replaces the clipping region.
+		return p.selectRegionClip(r, o.region)
 	}
 	return nil
 }
@@ -325,8 +366,7 @@ func (p *player) selectObject(r Record, id uint32) error {
 func (p *player) deleteObject(id uint32) {
 	p.objects[id] = playObject{}
 	p.generations[id]++
-	p.dc.pen = p.valid(p.dc.pen, true)
-	p.dc.brush = p.valid(p.dc.brush, false)
+	p.revalidate()
 }
 
 // clip combines area with the current clipping region.
@@ -380,6 +420,18 @@ func (p *player) setMetaRegion() {
 	copy(meta, p.dc.meta)
 	p.dc.meta = append(meta, p.dc.clip)
 	p.dc.clip = nil
+}
+
+func (p *player) selectRegionClip(r Record, rects []Rect) error {
+	m, err := p.toDestination(r)
+	if err != nil {
+		return err
+	}
+	path, ok := rectsPath(rects, m, p.options.MaxPathPoints)
+	if !ok {
+		return failure(r.Offset, "clip region points", ErrLimit)
+	}
+	return p.combineClip(r, ClipReplace, path, NonZero)
 }
 
 func (p *player) currentClip() Clip {

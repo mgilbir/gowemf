@@ -46,6 +46,10 @@ Intentional normalization:
 
 ### Known POI discrepancies
 
+- POI 5.4.1 reads EMF and WMF palette entries as flags, blue, green, red,
+  following MS-EMF 2.2.18's drawing. Playback uses GDI's PALETTEENTRY order,
+  which MS-WMF 2.2.2.13 specifies. A generated palette pins POI's reading.
+
 - In `wrench.emf`, POI interprets bytes belonging to a variable-length header
   description as header-extension fields. These values are not used as an oracle
   for extension support. gowemf currently exposes extensions without claiming to
@@ -149,10 +153,13 @@ Generated WMF playback scenes use MEMORYMETAFILE.
 ### GDI playback scenes
 
 `Play` output is rasterized by a test-only reference backend written separately
-from the playback code: it flattens its own curves, strokes in pen space, takes
+from the playback code. It flattens its own curves, strokes in pen space, takes
 coverage on 16 sub-scanlines with exact horizontal spans, and composites in sRGB
-onto white like the LibreOffice export. Its coverage, stroke-width and comparison
-metric each have generated tests. It centers lines on device pixels using
+onto white like the LibreOffice export. A stroke is the union of its segment,
+join and cap pieces. Clip regions are combined as exact span sets, so regions
+sharing a fractional edge leave no anti-aliased sliver. Coverage, stroke width,
+curved-stroke solidity, exact clip combination and the comparison metric each
+have generated tests. It centers lines on device pixels using
 `Stroke.PixelCenter`.
 
 There are eight 96x64 agreement scenes. Four EMF scenes combine the requested
@@ -229,6 +236,163 @@ Generated inputs, PNGs, wrapper documents and environment information remain
 ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.
 No GPL/MPL implementation source is read or ported. Windows GDI/GDI+ remains
 unavailable and no Windows render-equivalence claim is made.
+
+### Fill scenes
+
+Region fills (FillRgn on an L shape and PaintRgn) match LibreOffice exactly
+with a null pen. LibreOffice 24.2.7.2 diverges on every other fill:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-gradient.emf` | EMR_GRADIENTFILL draws nothing | Rectangle and triangle Gouraud meshes |
+| `lo-frame-region.emf` | EMR_FRAMERGN draws nothing | Exact 3 by 2 unit border |
+| `lo-region-outline.emf` | FillRgn and PaintRgn also stroke the outline with the selected pen | Brush fill only |
+| `lo-mono-brush.emf` | Monochrome brush fills with the background color only | Text color for clear bits, background for set bits |
+| `lo-palette-index.emf` | PALETTEINDEX colors drawn black; DIB_PAL_COLORS bitmap not drawn | Selected logical palette |
+| `lo-regions.wmf` | WMF FillRegion, PaintRegion and SelectClipRegion ignored | Region fills and clip |
+
+Because LibreOffice draws palette colors black, it cannot settle the palette
+byte order; POI's reading is pinned separately above. Twelve planted fill
+defects (palette byte order, PALETTERGB, AnimatePalette scope, monochrome
+colors, frame erosion and orientation, RECT_V, WMF scans, DIB_PAL_COLORS,
+region work budget, multi-rectangle regions and WMF clip regions) were each
+caught by the offline tests; those touching a scene also fail its probes.
+The pinned corpus now plays without reported omissions once a text backend is
+present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
+
+### EMF+ playback scenes
+
+Seven EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
+tolerance:
+- `plus-shapes.emf`: rectangles, an ellipse, a clockwise pie, an
+  alternate-filled path, a polygon, a wide line and a translucent fill.
+- `plus-transforms.emf`: a rotated world, a container mapping, Save/Restore and
+  an inch page unit.
+- `plus-clip.emf`: an excluded rectangle and a Complement region tree.
+- `plus-clip-path.emf`: a path clip united with a rectangle, and xor.
+- `plus-order.emf`: prepended and appended transform records, a Bézier and a
+  closed cardinal spline.
+- `plus-pens.emf`: wide pens, round caps, a clockwise arc and an open spline.
+- `plus-image.emf`: a PNG-encoded bitmap placed in a rectangle and on a
+  parallelogram.
+
+Geometry follows the default PixelOffsetMode (pixel centers at integer
+coordinates), half a pixel from LibreOffice's placement; the scenes keep that
+within the tolerance and away from the canvas border.
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-plus-page-change.emf` | A second SetPageTransform is ignored; drawing keeps the first page units | Each SetPageTransform replaces the page transform |
+| `lo-plus-raw-bitmap.emf` | Uncompressed (BitmapDataTypePixel) bitmaps draw nothing | Raw 32bppARGB pixels placed like encoded ones |
+| `lo-plus-texture.emf` | Texture brushes paint nothing | Image tiled through the brush transform |
+| `lo-plus-gradients.emf` | Linear gradients drawn in about eleven discrete bands | Continuous interpolation |
+| `lo-plus-nearest.emf` | NearestNeighbor interpolation ignored; images smoothed | Nearest-neighbor hint passed to the backend |
+
+LibreOffice agrees with playback for page units, containers, Save/Restore, all
+combine modes exercised, region trees, path clips, the clockwise angle
+convention, cardinal splines, pen caps and image placement. Its banded
+gradients follow the same direction, preset stops and mirrored wrap.
+
+Caps, compound pens and path gradients have their own scenes. `plus-caps.emf`
+(square and round caps chosen separately at each end) agrees with LibreOffice.
+LibreOffice 24.2.7.2 diverges on the rest:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-plus-square-anchor.emf` | SquareAnchor drawn wider than the line | A square of the line width (MS-EMFPLUS 2.1.1.17) |
+| `lo-plus-compound.emf` | Compound pens drawn as one solid full-width line | Parallel bands |
+| `lo-plus-path-gradient.emf` | An elliptical blend that also covers the filled area outside the boundary | A center-to-boundary fan inside the boundary only |
+
+LibreOffice could not settle the custom-cap convention. A file with an
+adjustable arrow cap fails to convert ("Unspecified Application Error"). Path
+caps are drawn reversed relative to the line, with an asymmetric cap
+re-centered. Custom caps therefore stay reported unless
+`PlayOptions.CustomLineCaps` opts into the interpretation in COVERAGE.md.
+`lo-plus-custom-cap.emf` pins LibreOffice's reversed path cap against that
+interpretation. Neither has been checked against Windows. Fifteen planted
+custom-cap defects were each caught by the offline tests, including both axis
+directions, insets, scales, line-versus-fill preference, the arrow geometry
+and the opt-in itself.
+
+Twenty-six planted defects in caps, compound pens and path gradients were each
+caught by the offline tests, and those that change a scene also fail the
+LibreOffice comparison. Three more were caught by the reference rasterizer's
+compound and mixed-cap test.
+
+Forty-five planted EMF+ defects were each caught by the offline tests before
+being restored, and those touching a scene also fail the LibreOffice comparison:
+- the pixel offset and its Half mode, DPI axes and page scale;
+- transform order, rotation direction, container mapping and container clips;
+- Restore, both combine-mode tables, infinite regions and world-space clip
+  offsets;
+- the path close flag and FillPath rule;
+- the gradient origin, brush transform and blend factors, and the texture
+  transform;
+- world and pixel pen widths, the default miter limit, dash scaling and caps;
+- arc direction and geometric angles, spline tension, closed-curve wrapping
+  and winding;
+- image shear, source offset, cache invalidation and per-object pixel budget
+  for images and pen textures;
+- SourceCopy reporting, skipped-container contents, both clip-step limits, the
+  hatch rendering origin and ARGB channel order;
+- closed DrawLines, multi-rectangle fills, Clear clipping and FillRegion.
+
+Two latent defects in the reference backend surfaced with these scenes: wide
+strokes of flattened curves were drawn faint, and clip differences left slivers
+on shared fractional edges. Both now have generated tests that fail on the old
+code, and every earlier scene was re-verified against LibreOffice afterwards.
+
+### Text scenes
+
+Text needs a typesetter, so its oracle tests live in the separate `rendercheck`
+module, which depends on forme (v0.9.0) and requires Go 1.26 without either
+reaching gowemf's own module. Its backend shares `internal/raster` with the
+scene tests and sets text from the system's Liberation Sans with GDI's
+TrueType conventions: a negative LOGFONT height is the em, a positive one the
+usWinAscent + usWinDescent cell; ascent and descent are usWin*; advances are
+hmtx widths. It refuses font requests it cannot honor instead of substituting.
+
+Ten agreement scenes (192x96) cover the alignment flags, natural and explicit
+spacing, cell-height fonts, rotated escapements, OPAQUE background cells,
+opaque and clip rectangles, TA_UPDATECP, upright text under MM_LOMETRIC and an
+anisotropic GM_COMPATIBLE page, rotated GM_ADVANCED text and ANSI WMF text
+through the code-page tables. Nine match LibreOffice within 0–8 of 18,432
+pixels under the same neighborhood metric; the decoration scene asserts the
+underline and strikeout extents by probe, because stroke position and
+thickness are each renderer's font policy. Fourteen planted text defects were
+each caught by both the offline text tests and the LibreOffice scenes.
+
+LibreOffice 24.2.7.2 renders ETO_NO_RECT records wrongly: it appears to read
+the absent rectangle anyway and misplaces or stacks the glyphs. The agreement
+scenes therefore record a zero rectangle, as Windows writers do, and the flag
+has its own pinned scene. Further pinned text divergences:
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-text-no-rect.emf` | ETO_NO_RECT misparsed; glyphs stacked | Advances read from the record's offDx |
+| `lo-text-justification.emf` | SetTextJustification ignored | Break extra added to spaces |
+| `lo-text-charextra.wmf` | META_SETTEXTCHAREXTRA ignored | Extra added to each character (MS-WMF 2.3.5.25) |
+| `lo-text-right-dx.emf` | Right alignment ends at the last glyph's own advance | Ends at the sum of the explicit advances |
+| `lo-text-updatecp-right.emf` | TA_RIGHT with TA_UPDATECP leaves the position at the right end | Position moves to the string's left end |
+| `lo-text-world-stretch.emf` | Glyphs not stretched by an anisotropic GM_ADVANCED world transform | Glyphs follow the full transform (MS-EMF 2.1.16) |
+
+EMF+ driver strings are compared in the same text harness:
+- `plus-driver.emf`: code units at explicit origins.
+- `plus-driver-world.emf`: a point-sized font under a rotated world transform,
+  with a translation matrix.
+
+Both agree with LibreOffice and carry hand-derived ink probes.
+`lo-plus-driver-glyphs.emf` pins a divergence: LibreOffice 24.2.7.2 draws
+nothing for glyph-index driver strings (without DriverStringOptionsCmapLookup),
+while playback hands the indexes to the backend.
+
+LibreOffice applies a non-translation driver-string matrix to the glyph shapes
+and the first position only; playback reports such matrices instead of
+adopting that reading. Fourteen planted driver-string defects were each caught
+by the offline tests, and the five that change the scenes also fail the
+LibreOffice comparison. They covered font units and page scale, styles,
+glyph/code-unit selection, realized advances, matrix order and sign, vertical
+and matrix reporting, decoration extents and the brush.
 
 ## Decoder and playback extensions
 

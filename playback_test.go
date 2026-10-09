@@ -65,10 +65,14 @@ func checkPath(p Path) error {
 func checkClip(c Clip) error {
 	for _, r := range c {
 		for ; r != nil; r = r.Base {
-			if r.Op < ClipIntersect || r.Op > ClipOffset {
+			if r.Op < ClipIntersect || r.Op > ClipComplement {
 				return fmt.Errorf("clip op %d", r.Op)
 			}
-			if r.Op != ClipOffset {
+			if r.Operand != nil {
+				if err := checkClip(Clip{r.Operand}); err != nil {
+					return err
+				}
+			} else if r.Op != ClipOffset {
 				if err := checkPath(r.Area); err != nil {
 					return err
 				}
@@ -76,6 +80,34 @@ func checkClip(c Clip) error {
 				return errors.New("invalid clip offset")
 			}
 		}
+	}
+	return nil
+}
+
+// checkPaint enforces the Paint contract for each kind.
+func checkPaint(p Paint) error {
+	switch p.Kind {
+	case PaintSolid:
+	case PaintHatch:
+		if p.Hatch > 5 || !p.PatternTransform.Finite() {
+			return fmt.Errorf("hatch paint %+v", p)
+		}
+	case PaintPattern:
+		if p.Pattern == nil || p.Pattern.Bounds().Empty() || !p.PatternTransform.Finite() || p.Wrap > WrapClamp {
+			return fmt.Errorf("pattern paint %+v", p)
+		}
+	case PaintLinearGradient:
+		g := p.Gradient
+		if g == nil || !g.Transform.Finite() || g.Wrap >= WrapClamp || len(g.Stops) < 2 || g.Stops[0].Offset != 0 || g.Stops[len(g.Stops)-1].Offset != 1 {
+			return fmt.Errorf("gradient paint %+v", g)
+		}
+		for i, s := range g.Stops {
+			if (i > 0 && s.Offset < g.Stops[i-1].Offset) || s.Color.A != g.Stops[0].Color.A {
+				return fmt.Errorf("gradient stops %+v", g.Stops)
+			}
+		}
+	default:
+		return fmt.Errorf("paint kind %d", p.Kind)
 	}
 	return nil
 }
@@ -92,14 +124,24 @@ func (b *recordingBackend) FillPath(path Path, rule FillRule, paint Paint, clip 
 	if rule != EvenOdd && rule != NonZero {
 		b.note(fmt.Errorf("fill rule %d", rule))
 	}
+	b.note(checkPaint(paint))
 	b.fills = append(b.fills, recordedFill{path, rule, paint, clip})
 	return nil
 }
 func (b *recordingBackend) StrokePath(path Path, s Stroke, clip Clip) error {
 	b.note(checkPath(path))
 	b.note(checkClip(clip))
-	if !s.Transform.Finite() || !finite(s.Width) || s.Width < 0 {
+	if !s.Transform.Finite() || !finite(s.Width) || s.Width < 0 || !finite(s.DashOffset) || (s.Dash != DashUser && len(s.Dashes) > 0) {
 		b.note(fmt.Errorf("stroke %+v", s))
+	}
+	for _, d := range s.Dashes {
+		if !finite(d) || d < 0 {
+			b.note(fmt.Errorf("dash lengths %v", s.Dashes))
+		}
+	}
+	b.note(checkPaint(s.Paint))
+	if s.Gap != nil {
+		b.note(checkPaint(*s.Gap))
 	}
 	b.strokes = append(b.strokes, recordedStroke{path, s, clip})
 	return nil
@@ -164,20 +206,6 @@ func TestPlayRejectsInvalidOptions(t *testing.T) {
 	}
 }
 
-func TestPlayEMFPlusRequiresGDIFallback(t *testing.T) {
-	data := plusFixture() // EMF+ Dual
-	copy(data[8:], longs(0, 0, 95, 63, 0, 0, 2400, 1600))
-	copy(data[72:], longs(1000, 1000, 250, 250))
-	if _, err := Play(data, PlayOptions{Destination: Box{Width: 96, Height: 64}}, &recordingBackend{}); !errors.Is(err, ErrUnsupported) {
-		t.Fatal("EMF+ drawing must be reported unsupported:", err)
-	}
-	o := PlayOptions{Destination: Box{Width: 96, Height: 64}}
-	o.Stream.PreferGDI = true
-	if _, err := Play(data, o, &recordingBackend{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestPlayReportsUnsupportedOperations(t *testing.T) {
 	text := emfRecord(EMRExtTextOutW, cat(longs(0, 0, 0, 0, 1), fl(1, 1), longs(5, 5, 1, 60, 0x100, 0), []byte{'A', 0}))
 	data := emfScene(96, 64, 2, text, emfBox(EMRRectangle, 0, 0, 10, 10))
@@ -203,18 +231,21 @@ func TestPlayReportsUnsupportedOperations(t *testing.T) {
 	}
 	// Every unimplemented drawing family is reported, never silently dropped.
 	for name, rec := range map[string][]byte{
-		"flood fill":    emfRecord(EMRExtFloodFill, longs(1, 1, 0, 0)),
-		"gradient fill": emfRecord(EMRGradientFill, longs(0, 0, 0, 0, 0, 0, 0)),
-		"region paint":  emfRecord(EMRPaintRgn, cat(longs(0, 0, 0, 0, 32), longs(32, 1, 0, 0, 0, 0, 0, 0))),
-		"WidenPath":     cat(emfEmpty(EMRBeginPath), emfEmpty(EMREndPath), emfEmpty(EMRWidenPath)),
-		"ROP2":          cat(emfValue(EMRSetROP2, 7), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"layout":        cat(emfValue(EMRSetLayout, 1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"COLORREF":      cat(emfBrush(1, 0, 0x01000003), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"raster op":     emfBlt(EMRBitBlt, 0, 0, 4, 4, 0x00660046, 0, 0, 0, 0, nil, nil),
-		"hatch":         cat(emfRecord(EMRCreateBrushIndirect, longs(1, 2, 0, 7)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"monochrome":    cat(emfRecord(EMRCreateMonoBrush, longs(1, 0, 0, 0, 0, 0)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"ICM":           cat(colorSpaceRecord(false).Raw, emfValue(EMRSetColorSpace, 1), emfValue(EMRSetICMMode, 2), emfBox(EMRRectangle, 0, 0, 1, 1)),
-		"masked":        maskBltFixture(true),
+		"flood fill":       emfRecord(EMRExtFloodFill, longs(1, 1, 0, 0)),
+		"gradient fill":    emfRecord(EMRGradientFill, longs(0, 0, 0, 0, 0, 0, 0)),
+		"region inversion": emfRecord(EMRInvertRgn, cat(longs(0, 0, 0, 0, 32), longs(32, 1, 0, 0, 0, 0, 0, 0))),
+		"WidenPath":        cat(emfEmpty(EMRBeginPath), emfEmpty(EMREndPath), emfEmpty(EMRWidenPath)),
+		"ROP2":             cat(emfValue(EMRSetROP2, 7), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"layout":           cat(emfValue(EMRSetLayout, 1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"COLORREF":         cat(emfBrush(1, 0, 0x01000003), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"raster op":        emfBlt(EMRBitBlt, 0, 0, 4, 4, 0x00660046, 0, 0, 0, 0, nil, nil),
+		"hatch":            cat(emfRecord(EMRCreateBrushIndirect, longs(1, 2, 0, 7)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"monochrome": func() []byte {
+			i, b := sceneDIB(2, 2, false, quadrantsN(2, 2)) // 24-bit, not monochrome
+			return cat(emfRecord(EMRCreateMonoBrush, cat(longs(1, 0, 32, int32(len(i)), int32(32+len(i)), int32(len(b))), i, b)), emfSelect(1), emfBox(EMRRectangle, 0, 0, 1, 1))
+		}(),
+		"ICM":    cat(colorSpaceRecord(false).Raw, emfValue(EMRSetColorSpace, 1), emfValue(EMRSetICMMode, 2), emfBox(EMRRectangle, 0, 0, 1, 1)),
+		"masked": maskBltFixture(true),
 		"partial scans": func() []byte {
 			i, b := sceneDIB(4, 4, false, quadrantsN(4, 4))
 			return emfSetDIBitsToDevice(0, 0, 0, 0, 4, 4, 2, i, b)
@@ -534,15 +565,15 @@ func TestPlayClipRegions(t *testing.T) {
 	if c := b.fills[1].clip; len(c) != 1 || c[0] != b.fills[0].clip[0] {
 		t.Fatalf("reset clip %+v", c)
 	}
-	// A WMF region selected as a clip is reported.
+	// A WMF region selected with SelectObject or SelectClipRegion replaces
+	// the clip; its scans are logical units.
 	region := testRecord(WMF, MetaCreateRegion, 0, wmfRegionFixture())
-	var reasons []string
-	record(t, wmfScene(96, 64, 1, region, wmfRec(MetaSelectObject, 0)), PlayOptions{Unsupported: func(u UnsupportedOperation) error {
-		reasons = append(reasons, u.Reason)
-		return nil
-	}})
-	if len(reasons) != 1 || reasons[0] != "WMF region clipping" {
-		t.Fatal(reasons)
+	for _, sel := range []Record{wmfRec(MetaSelectObject, 0), wmfRec(MetaSelectClipRegion, 0)} {
+		b := record(t, wmfScene(48, 32, 1, wmfBox(MetaIntersectClipRect, 0, 0, 1, 1), region, sel, wmfBox(MetaRectangle, 0, 0, 40, 30)), PlayOptions{})
+		c := b.fills[0].clip
+		if len(c) != 1 || c[0].Op != ClipReplace || c[0].Base != nil || !near(c[0].Area.Points[0], Point{6, 10}) || !near(c[0].Area.Points[2], Point{18, 12}) {
+			t.Fatalf("WMF region clip %+v", c)
+		}
 	}
 }
 
@@ -565,8 +596,9 @@ func FuzzPlay(f *testing.F) {
 		f.Add(s.data)
 	}
 	f.Add(maskBltFixture(false))
+	f.Add(emfScene(96, 64, 2, emfFont(1, -20, 300, 0, 0, "F"), emfSelect(1), emfValue(EMRSetTextAlign, 1|6), emfText(1, 4, 5, 6, &Rect{1, 2, 30, 40}, "ab c", nil, []int32{3, 4, 5, 6})))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		b := &recordingBackend{}
+		b := &fakeText{}
 		o := PlayOptions{
 			Stream:         StreamOptions{Framing: Limits{MaxBytes: 1 << 20, MaxRecordBytes: 1 << 18, MaxRecords: 4096}, Decoding: DecodeLimits{MaxElements: 4096, MaxObjectBytes: 1 << 18}, MaxObjects: 1024, MaxSavedStates: 64, PreferGDI: true},
 			Images:         ImageLimits{MaxBytes: 1 << 18, MaxPixels: 1 << 16},
@@ -577,9 +609,19 @@ func FuzzPlay(f *testing.F) {
 			MaxClipSteps:   64,
 			Unsupported:    func(UnsupportedOperation) error { return nil },
 		}
+		ansi := uint8(0)
+		o.DefaultCharSet = &ansi
 		_, _ = Play(data, o, b)
-		if b.bad != nil {
-			t.Fatal(b.bad)
+		if b.recordingBackend.bad != nil {
+			t.Fatal(b.recordingBackend.bad)
+		}
+		// EMF+ records, when present, play unless the GDI fallback is chosen.
+		b = &fakeText{}
+		o.Stream.PreferGDI = false
+		o.CustomLineCaps = true
+		_, _ = Play(data, o, b)
+		if b.recordingBackend.bad != nil {
+			t.Fatal(b.recordingBackend.bad)
 		}
 	})
 }

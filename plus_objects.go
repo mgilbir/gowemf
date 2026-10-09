@@ -353,7 +353,9 @@ type PlusAssembler struct {
 	active  bool
 }
 
-// Add returns nil while continuation is pending. A completed object owns an
+// Add returns nil while continuation is pending. An object completes when its
+// payload reaches TotalSize, even if that fragment is still marked Continued.
+// A completed object owns an
 // independent byte slice when assembled; single-record objects borrow f.Data.
 func (a *PlusAssembler) Add(f PlusObjectFragment) (data []byte, err error) {
 	defer func() {
@@ -390,12 +392,17 @@ func (a *PlusAssembler) Add(f PlusObjectFragment) (data []byte, err error) {
 	if uint64(a.total) > l.MaxObjectBytes || uint64(a.total) > uint64(int(^uint(0)>>1)) {
 		return nil, failure(0, "EMF+ object bytes", ErrLimit)
 	}
-	if (f.Continued && n >= uint64(a.total)) || (!f.Continued && (n < uint64(a.total) || n-uint64(a.total) > 3)) {
+	// The object ends once TotalObjectSize bytes have been read (MS-EMFPLUS
+	// 2.3.5.1), whether or not the final record clears C, as the spec says
+	// it should: writers set C on every record. Only a record without C may
+	// end short of the total, and the final record can add DWORD padding.
+	complete := n >= uint64(a.total)
+	if (!complete && !f.Continued) || (complete && n-uint64(a.total) > 3) {
 		return nil, malformed(0, "EMF+ continuation length")
 	}
-	if !f.Continued {
+	if complete {
 		n = uint64(a.total)
-	} // final record can include DWORD padding
+	}
 	if n > uint64(cap(a.pending)) {
 		capacity := uint64(cap(a.pending)) * 2
 		if capacity < n {
@@ -412,7 +419,7 @@ func (a *PlusAssembler) Add(f PlusObjectFragment) (data []byte, err error) {
 		a.pending = grown
 	}
 	a.pending = append(a.pending, f.Data[:int(n)-len(a.pending)]...)
-	if f.Continued {
+	if !complete {
 		return nil, nil
 	}
 	data = a.pending

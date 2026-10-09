@@ -108,7 +108,9 @@ palette color realization and raster/compositing operations belong to playback.
 - Region trees are iteratively decoded into indexed nodes, with node counts,
   child links, path lengths, storage budget and maximum depth checked.
 - Object continuation checks ID/type/total-size consistency and final alignment
-  padding. Incomplete objects cannot enter the stream's object table.
+  padding. An object ends once TotalObjectSize bytes are read (MS-EMFPLUS
+  2.3.5.1), even when its final record keeps the C bit, as writers do.
+  Incomplete objects cannot enter the stream's object table.
 
 Texture brushes retain optional transforms/images and gamma/wrap flags. Path
 gradients retain center/surrounding colors, point/path boundaries, transforms,

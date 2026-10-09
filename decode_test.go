@@ -320,12 +320,44 @@ func TestPlusObjectsAndContinuation(t *testing.T) {
 	if err := a.Finish(); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []PlusObjectFragment{
-		{ID: 2, Type: 1, Continued: true, TotalSize: 4, Data: brush},
-		{ID: 2, Type: 1, Continued: true, TotalSize: 0xffffffff, Data: brush[:1]},
+	// Writers also set C on the final fragment; the object still ends at
+	// TotalObjectSize (MS-EMFPLUS 2.3.5.1), with at most DWORD padding.
+	for _, final := range [][]byte{brush[8:], append(brush[8:], 0, 0, 0)} {
+		if data, err := a.Add(PlusObjectFragment{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush[:4]}); data != nil || err != nil {
+			t.Fatal(data, err)
+		}
+		if data, err := a.Add(PlusObjectFragment{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush[4:8]}); data != nil || err != nil {
+			t.Fatal(data, err)
+		}
+		data, err := a.Add(PlusObjectFragment{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: final})
+		if err != nil || !bytes.Equal(data, brush) {
+			t.Fatal(data, err)
+		}
+		if err := a.Finish(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if data, err := a.Add(PlusObjectFragment{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush}); err != nil || !bytes.Equal(data, brush) {
+		t.Fatal("whole object in one continued fragment", data, err)
+	}
+	for _, fragments := range [][]PlusObjectFragment{
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 4, Data: brush}},
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 0xffffffff, Data: brush[:1]}},
+		// Overshoot past padding, a short final fragment, and a different
+		// object before the total is reached.
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 8, Data: brush[:4]}, {ID: 2, Type: 1, Continued: true, TotalSize: 8, Data: brush[4:]}},
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush[:4]}, {ID: 2, Type: 1, Data: brush[4:8]}},
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush[:4]}, {ID: 3, Type: 1, Continued: true, TotalSize: 12, Data: brush[4:]}},
+		{{ID: 2, Type: 1, Continued: true, TotalSize: 12, Data: brush[:4]}, {ID: 2, Type: 1, Continued: true, TotalSize: 16, Data: brush[4:]}},
 	} {
-		if _, err := a.Add(f); err == nil {
-			t.Fatal("accepted invalid continuation")
+		var err error
+		for _, f := range fragments {
+			if _, err = a.Add(f); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			t.Fatal("accepted invalid continuation", fragments)
 		}
 		if err := a.Finish(); err != nil {
 			t.Fatal("error did not reset assembler")

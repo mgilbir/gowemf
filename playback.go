@@ -145,11 +145,12 @@ const (
 // case Cap is the start cap and EndCap the end cap (EMF+ pens only). A
 // non-empty Compound divides the pen across its width into parallel bands
 // (MS-EMFPLUS 2.2.2.9): pairs of fractions [a,b] of the width. Play passes
-// only arrays symmetric about the center, with miter joins, so each band is
-// exact as a difference of ordinary strokes: a band with b <= 1/2 covers the
+// only arrays symmetric about the center, so each band is a difference of
+// ordinary strokes with the pen's Join (miter or round): a band with b <= 1/2 covers the
 // stroke of width (1-2a)*Width minus the stroke of width (1-2b)*Width, and a
 // band containing the center covers the stroke of width (1-2a)*Width; open
-// figures then have flat caps and no dashes.
+// figures then have flat caps and no dashes, and miter joins stay within
+// the miter limit.
 type Stroke struct {
 	Paint       Paint
 	Hairline    bool

@@ -36,6 +36,14 @@ func plusScenes() []renderScene {
 		{name: "lo-plus-compound.emf", divergence: "compound pens are drawn as one solid line of the full width",
 			data:   scenePlusCompound(),
 			probes: []probe{{48, 12, cBlack}, {48, 16, cWhite}, {48, 21, cBlack}, {48, 8, cWhite}, {48, 24, cWhite}, {48, 32, cBlack}, {48, 34, cWhite}, {48, 37, cBlack}, {48, 46, cWhite}}, libreOffice: []probe{{48, 16, cBlack}, {48, 34, cBlack}}},
+		// Corners of 24-wide compound pens with bands at 6 to 12 units from
+		// the path, round at (16,20) and miter at (58,20). Along the corner's
+		// outward diagonal the round outer band spans 6 to 12 units and the
+		// miter one 8.5 to 17.
+		{name: "lo-plus-compound-joins.emf", divergence: "compound pens are drawn as one solid line of the full width",
+			data:        scenePlusCompoundJoins(),
+			probes:      []probe{{8, 12, cBlack}, {5, 9, cWhite}, {12, 16, cWhite}, {23, 10, cBlack}, {47, 9, cBlack}, {53, 15, cWhite}, {56, 18, cWhite}},
+			libreOffice: []probe{{12, 16, cBlack}, {56, 18, cBlack}}},
 		{name: "lo-plus-path-gradient.emf", divergence: "path gradients are drawn as an elliptical blend that also covers the filled area outside the boundary",
 			data:   scenePlusPathGradient(),
 			probes: []probe{{32, 32, cRed}, {10, 32, color.NRGBA{21, 0, 234, 255}}, {70, 32, cWhite}, {32, 5, cWhite}}, libreOffice: []probe{{10, 32, color.NRGBA{153, 0, 102, 255}}, {70, 32, color.NRGBA{77, 0, 179, 255}}}},
@@ -329,6 +337,18 @@ func scenePlusCompound() []byte {
 		plusRec(PlusDrawLinesRecord, 1, dwords(2), fl(10, 16, 86, 16)),
 		plusObj(2, 2, plusPen(1024, 0, 8, cat(dwords(4), fl(0, .375, .625, 1)), black)),
 		plusRec(PlusDrawRectsRecord, 2, dwords(1), fl(20, 34, 56, 24)),
+	)
+}
+
+func scenePlusCompoundJoins() []byte {
+	black := solidBrush(0xff000000)
+	bands := cat(dwords(4), fl(0, .25, .75, 1))
+	return plusScene96(
+		plusRec(PlusSetPixelOffsetModeRecord, 4),
+		plusObj(1, 2, plusPen(8|1024, 0, 24, cat(dwords(2), bands), black)),
+		plusRec(PlusDrawRectsRecord, 1, dwords(1), fl(16, 20, 14, 24)),
+		plusObj(2, 2, plusPen(8|1024|16, 0, 24, cat(dwords(0), fl(10), bands), black)),
+		plusRec(PlusDrawRectsRecord, 2, dwords(1), fl(58, 20, 18, 24)),
 	)
 }
 

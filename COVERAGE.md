@@ -177,8 +177,9 @@ color-object lifetimes are handled without mutating previously emitted snapshots
 
 ## GDI playback
 
-`Play` interprets the WMF and EMF GDI streams; EMF+ files play only their Dual
-GDI fallback on request. Coverage of each family:
+`Play` interprets the WMF and EMF GDI streams, and the GDI records inside EMF+
+GetDC intervals. EMF+ playback is described in the next section. Coverage of
+each GDI family:
 
 | Family | Played | Reported as unsupported |
 | --- | --- | --- |
@@ -274,6 +275,56 @@ geometry is retained in destination coordinates, so a path survives transform
 changes made after it is recorded. Each clip step is an immutable node shared by
 saved states; the chain length is bounded across the clip and metaregions.
 
+## EMF+ playback
+
+`Play` interprets EMF+ records by default; `StreamOptions.PreferGDI` selects
+the GDI fallback of a Dual file instead. GDI records inside GetDC intervals are
+played by the GDI player, with its own device context.
+
+| Family | Played | Reported as unsupported |
+| --- | --- | --- |
+| State | Save/Restore, BeginContainer (World or Pixel units) and BeginContainerNoParams, EndContainer; Set/Reset/Multiply/Translate/Scale/RotateWorldTransform in prepend and append order; SetPageTransform in Pixel, Point, Inch, Document and Millimeter units; pixel offset, interpolation and compositing modes; rendering origin. Anti-aliasing, text hints and compositing quality are backend policy. | Display and World page units; containers in physical units (their contents are skipped as a unit); SetTSGraphics and SetTSClip |
+| Clipping | SetClipRect, SetClipPath, SetClipRegion with all six combine modes; region trees with every node type; ResetClip, OffsetClip; container clips as metaregions | — |
+| Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps) | Hatch styles 6–52, path gradients, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha |
+| Pens | World and Pixel widths, pen transform, flat/square/round caps, miter/bevel/round joins, miter limit, predefined and custom dashes with offset, any supported brush | Compound pens, custom, anchor, triangle and mixed caps, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
+| Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
+| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
+| Text | — | DrawString and DrawDriverString |
+
+Interpretations where MS-EMFPLUS leaves room:
+
+- World coordinates map to EMF device pixels through the world, container and
+  page transforms. Page units convert with the EMF+ header's logical DPI. With
+  no SetPageTransform the page is one device pixel per unit at scale 1.
+- Under PixelOffsetMode Default, HighSpeed and None, integer device
+  coordinates are pixel centers (MS-EMFPLUS 2.1.1.26). All geometry, clipping
+  and images shift by half a device pixel; Half and HighQuality do not.
+- A container maps its source rectangle onto its destination rectangle in the
+  enclosing world space. The world transform and clip start reset, and the
+  enclosing clip constrains drawing as a metaregion.
+- EmfPlusPath carries no fill mode, so FillPath, path clips and path region
+  nodes use GDI+'s default alternate rule. FillPolygon is alternate, and
+  FillClosedCurve follows its winding flag.
+- Pie and arc angles are clockwise from the x axis to the ray through the
+  point, so elliptical arcs use geometric, not parametric, angles. Sweeps are
+  limited to ±360 degrees. An empty DrawArc draws nothing.
+- Cardinal spline segments become Béziers whose control points are offset by
+  tension/3 of the neighboring chord; open curves repeat their end points.
+- Linear gradients run from the left edge (0) to the right edge (1) of the
+  brush rectangle in brush space, which the brush transform places in world
+  space. Blend factors are fractions of the end color, interpolated linearly
+  in sRGB.
+- World-unit pen widths follow the pen and world transforms. Pixel-unit widths
+  are device pixels. A zero width is a hairline. Unset miter limits are 10,
+  GDI+'s default.
+- SourceCopy compositing replaces pixels. That equals source-over for opaque
+  paint, which is drawn; translucent paint is reported. Clear requires an
+  opaque color for the same reason.
+- Bitmap images decode once per object definition and are charged to the
+  playback pixel budget then: the declared size first, then any excess of the
+  decoded size. Region trees are converted to depth 256 at most. Clip steps
+  share the PlayOptions bound.
+
 ## Pixel decoding
 
 - DIB headers: CORE, INFO, V4, V5. V4/V5 retain calibrated RGB or bounded
@@ -344,8 +395,10 @@ playback, TIFF and ICC color transform integration. Generated color tests includ
 to-sRGB expectations, alpha preservation, and concurrent backend calls.
 The pinned corpus and POI comparisons are described in ORACLES.md. Passing them
 does not establish full specification conformance or render equivalence. Linux
-render comparisons cover generated raster transfers, TIFFs and GDI playback
-scenes for paths, transforms, mapping modes, objects, clipping and bitmaps, but
-not text. Known LibreOffice divergences are pinned separately in ORACLES.md.
+render comparisons cover generated raster transfers, TIFFs, GDI playback
+scenes for paths, transforms, mapping modes, objects, clipping, bitmaps, fills
+and text, and EMF+ playback scenes for shapes, transforms, containers,
+clipping, pens, curves, gradients and images. Known LibreOffice divergences
+are pinned separately in ORACLES.md.
 Playback unit tests and offline scene probes check spec-derived geometry and
 pixels in `make check`; the pinned corpus must play with every omission reported.

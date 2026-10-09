@@ -139,6 +139,20 @@ func TestExternalCorpus(t *testing.T) {
 				t.Fatal("text playback geometry:", text.recordingBackend.bad)
 			}
 			t.Logf("text playback: %d runs; unsupported: %v", len(text.drawn), skipped)
+			if h.EMFPlus == nil {
+				return
+			}
+			// EMF+ playback must likewise finish, reporting every omission.
+			skipped = make(map[string]int)
+			native := &recordingBackend{}
+			options.Stream.PreferGDI = false
+			if _, err := Play(b, options, native); err != nil {
+				t.Fatal("EMF+ playback:", err)
+			}
+			if native.bad != nil {
+				t.Fatal("EMF+ playback geometry:", native.bad)
+			}
+			t.Logf("EMF+ playback: %d fills, %d strokes, %d images; unsupported: %v", len(native.fills), len(native.strokes), len(native.images), skipped)
 		})
 	}
 }

@@ -34,7 +34,7 @@ type renderScene struct {
 }
 
 func renderScenes() []renderScene {
-	return append(append(append(agreementScenes(), fillScenes()...), wmfFillScenes()...), divergenceScenes()...)
+	return append(append(append(append(agreementScenes(), fillScenes()...), wmfFillScenes()...), divergenceScenes()...), plusScenes()...)
 }
 
 const (

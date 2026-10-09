@@ -45,7 +45,7 @@ func (rb *rasterBackend) clip(c Clip) []*raster.ClipNode {
 		if n, ok := rb.nodes[r]; ok {
 			return n
 		}
-		n := &raster.ClipNode{Base: convert(r.Base), Op: raster.ClipOp(r.Op), Area: toRasterPath(r.Area), Rule: raster.Rule(r.Rule), Offset: raster.Point(r.Offset)}
+		n := &raster.ClipNode{Base: convert(r.Base), Op: raster.ClipOp(r.Op), Area: toRasterPath(r.Area), Rule: raster.Rule(r.Rule), Operand: convert(r.Operand), Offset: raster.Point(r.Offset)}
 		rb.nodes[r] = n
 		return n
 	}
@@ -61,9 +61,19 @@ func toRasterPaint(p Paint) (raster.Paint, error) {
 	case PaintSolid:
 		return raster.Paint{Color: p.Color}, nil
 	case PaintPattern:
-		return raster.Paint{Pattern: p.Pattern, PatternTransform: toRasterMatrix(p.PatternTransform)}, nil
+		return raster.Paint{Pattern: p.Pattern, PatternTransform: toRasterMatrix(p.PatternTransform), Wrap: raster.Wrap(p.Wrap)}, nil
+	case PaintLinearGradient:
+		return raster.Paint{Gradient: toRasterGradient(p.Gradient)}, nil
 	}
 	return raster.Paint{}, fmt.Errorf("test rasterizer does not implement paint kind %d", p.Kind)
+}
+
+func toRasterGradient(g *LinearGradient) *raster.Gradient {
+	out := &raster.Gradient{Transform: toRasterMatrix(g.Transform), Wrap: raster.Wrap(g.Wrap)}
+	for _, s := range g.Stops {
+		out.Stops = append(out.Stops, raster.Stop{Offset: s.Offset, Color: s.Color})
+	}
+	return out
 }
 
 func (rb *rasterBackend) FillPath(path Path, rule FillRule, paint Paint, clip Clip) error {

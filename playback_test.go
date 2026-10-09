@@ -65,10 +65,14 @@ func checkPath(p Path) error {
 func checkClip(c Clip) error {
 	for _, r := range c {
 		for ; r != nil; r = r.Base {
-			if r.Op < ClipIntersect || r.Op > ClipOffset {
+			if r.Op < ClipIntersect || r.Op > ClipComplement {
 				return fmt.Errorf("clip op %d", r.Op)
 			}
-			if r.Op != ClipOffset {
+			if r.Operand != nil {
+				if err := checkClip(Clip{r.Operand}); err != nil {
+					return err
+				}
+			} else if r.Op != ClipOffset {
 				if err := checkPath(r.Area); err != nil {
 					return err
 				}
@@ -76,6 +80,34 @@ func checkClip(c Clip) error {
 				return errors.New("invalid clip offset")
 			}
 		}
+	}
+	return nil
+}
+
+// checkPaint enforces the Paint contract for each kind.
+func checkPaint(p Paint) error {
+	switch p.Kind {
+	case PaintSolid:
+	case PaintHatch:
+		if p.Hatch > 5 || !p.PatternTransform.Finite() {
+			return fmt.Errorf("hatch paint %+v", p)
+		}
+	case PaintPattern:
+		if p.Pattern == nil || p.Pattern.Bounds().Empty() || !p.PatternTransform.Finite() || p.Wrap > WrapClamp {
+			return fmt.Errorf("pattern paint %+v", p)
+		}
+	case PaintLinearGradient:
+		g := p.Gradient
+		if g == nil || !g.Transform.Finite() || g.Wrap >= WrapClamp || len(g.Stops) < 2 || g.Stops[0].Offset != 0 || g.Stops[len(g.Stops)-1].Offset != 1 {
+			return fmt.Errorf("gradient paint %+v", g)
+		}
+		for i, s := range g.Stops {
+			if (i > 0 && s.Offset < g.Stops[i-1].Offset) || s.Color.A != g.Stops[0].Color.A {
+				return fmt.Errorf("gradient stops %+v", g.Stops)
+			}
+		}
+	default:
+		return fmt.Errorf("paint kind %d", p.Kind)
 	}
 	return nil
 }
@@ -92,14 +124,24 @@ func (b *recordingBackend) FillPath(path Path, rule FillRule, paint Paint, clip 
 	if rule != EvenOdd && rule != NonZero {
 		b.note(fmt.Errorf("fill rule %d", rule))
 	}
+	b.note(checkPaint(paint))
 	b.fills = append(b.fills, recordedFill{path, rule, paint, clip})
 	return nil
 }
 func (b *recordingBackend) StrokePath(path Path, s Stroke, clip Clip) error {
 	b.note(checkPath(path))
 	b.note(checkClip(clip))
-	if !s.Transform.Finite() || !finite(s.Width) || s.Width < 0 {
+	if !s.Transform.Finite() || !finite(s.Width) || s.Width < 0 || !finite(s.DashOffset) || (s.Dash != DashUser && len(s.Dashes) > 0) {
 		b.note(fmt.Errorf("stroke %+v", s))
+	}
+	for _, d := range s.Dashes {
+		if !finite(d) || d < 0 {
+			b.note(fmt.Errorf("dash lengths %v", s.Dashes))
+		}
+	}
+	b.note(checkPaint(s.Paint))
+	if s.Gap != nil {
+		b.note(checkPaint(*s.Gap))
 	}
 	b.strokes = append(b.strokes, recordedStroke{path, s, clip})
 	return nil
@@ -161,20 +203,6 @@ func TestPlayRejectsInvalidOptions(t *testing.T) {
 	// Device units are destination units; the right/bottom edge is excluded.
 	if len(b.fills) != 1 || !near(b.fills[0].path.Points[2], Point{19, 19}) {
 		t.Fatal("caller-supplied bounds were not mapped onto the destination", b.fills)
-	}
-}
-
-func TestPlayEMFPlusRequiresGDIFallback(t *testing.T) {
-	data := plusFixture() // EMF+ Dual
-	copy(data[8:], longs(0, 0, 95, 63, 0, 0, 2400, 1600))
-	copy(data[72:], longs(1000, 1000, 250, 250))
-	if _, err := Play(data, PlayOptions{Destination: Box{Width: 96, Height: 64}}, &recordingBackend{}); !errors.Is(err, ErrUnsupported) {
-		t.Fatal("EMF+ drawing must be reported unsupported:", err)
-	}
-	o := PlayOptions{Destination: Box{Width: 96, Height: 64}}
-	o.Stream.PreferGDI = true
-	if _, err := Play(data, o, &recordingBackend{}); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -583,6 +611,13 @@ func FuzzPlay(f *testing.F) {
 		}
 		ansi := uint8(0)
 		o.DefaultCharSet = &ansi
+		_, _ = Play(data, o, b)
+		if b.recordingBackend.bad != nil {
+			t.Fatal(b.recordingBackend.bad)
+		}
+		// EMF+ records, when present, play unless the GDI fallback is chosen.
+		b = &fakeText{}
+		o.Stream.PreferGDI = false
 		_, _ = Play(data, o, b)
 		if b.recordingBackend.bad != nil {
 			t.Fatal(b.recordingBackend.bad)

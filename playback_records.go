@@ -8,16 +8,16 @@ import (
 
 func (p *player) dispatch(c Command) error {
 	r := c.Source
+	if r.Format == EMFPlus {
+		return p.plusDispatch(c)
+	}
 	if c.HasObjectID {
 		return p.create(r, c.ObjectID, c.Body)
 	}
 	if r.Format == WMF {
 		return p.wmf(c)
 	}
-	if r.Format == EMF {
-		return p.emf(c)
-	}
-	return p.unsupported(r, "EMF+ record")
+	return p.emf(c)
 }
 
 func (p *player) wmf(c Command) error {

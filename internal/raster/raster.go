@@ -66,12 +66,92 @@ const (
 	JoinMiter
 )
 
-// Paint is a solid color, or a pattern tiled through the inverse of
-// PatternTransform when Pattern is set.
+// Paint is a solid color, a pattern repeated by Wrap through the inverse of
+// PatternTransform when Pattern is set, or a linear gradient.
 type Paint struct {
 	Color            color.NRGBA
 	Pattern          image.Image
 	PatternTransform Matrix
+	Wrap             Wrap
+	Gradient         *Gradient
+}
+
+// Wrap selects how patterns and gradients continue outside their tile.
+type Wrap uint8
+
+const (
+	WrapTile Wrap = iota
+	WrapFlipX
+	WrapFlipY
+	WrapFlipXY
+	WrapClamp // nothing is painted outside the tile
+)
+
+// Stop is a gradient color at an offset in [0,1].
+type Stop struct {
+	Offset float64
+	Color  color.NRGBA
+}
+
+// Gradient interpolates Stops (ascending offsets) linearly in straight-alpha
+// sRGB by the x coordinate of Transform applied to the pixel center. The
+// parameter repeats as Wrap describes; for this one-dimensional parameter
+// FlipY behaves as Tile and FlipXY as FlipX, and Clamp extends the end colors.
+type Gradient struct {
+	Transform Matrix
+	Stops     []Stop
+	Wrap      Wrap
+}
+
+func (g *Gradient) at(p Point) color.NRGBA {
+	t := g.Transform.Apply(p).X
+	switch g.Wrap {
+	case WrapTile, WrapFlipY:
+		t -= math.Floor(t)
+	case WrapFlipX, WrapFlipXY:
+		t = math.Mod(math.Abs(t), 2)
+		if t > 1 {
+			t = 2 - t
+		}
+	}
+	s := g.Stops
+	if t <= s[0].Offset {
+		return s[0].Color
+	}
+	for i := 1; i < len(s); i++ {
+		if t <= s[i].Offset {
+			a, b := s[i-1], s[i]
+			if b.Offset == a.Offset {
+				return b.Color
+			}
+			f := (t - a.Offset) / (b.Offset - a.Offset)
+			l := func(x, y uint8) uint8 { return uint8(math.Round(float64(x) + (float64(y)-float64(x))*f)) }
+			return color.NRGBA{l(a.Color.R, b.Color.R), l(a.Color.G, b.Color.G), l(a.Color.B, b.Color.B), l(a.Color.A, b.Color.A)}
+		}
+	}
+	return s[len(s)-1].Color
+}
+
+// wrapIndex maps v into [0,n) per wrap, or reports it outside a clamped tile.
+func wrapIndex(v, n int, flip, clamp bool) (int, bool) {
+	if clamp {
+		return v, v >= 0 && v < n
+	}
+	if !flip {
+		v %= n
+		if v < 0 {
+			v += n
+		}
+		return v, true
+	}
+	v %= 2 * n
+	if v < 0 {
+		v += 2 * n
+	}
+	if v >= n {
+		v = 2*n - 1 - v
+	}
+	return v, true
 }
 
 // Stroke is a pen of Width in pen space; Transform maps pen space to the
@@ -96,21 +176,23 @@ const (
 	ClipDifference
 	ClipReplace
 	ClipOffset
+	ClipComplement
 )
 
 // ClipNode mirrors gowemf.ClipRegion. Nodes are cached by pointer.
 type ClipNode struct {
-	Base   *ClipNode
-	Op     ClipOp
-	Area   Path
-	Rule   Rule
-	Offset Point
+	Base    *ClipNode
+	Op      ClipOp
+	Area    Path
+	Rule    Rule
+	Operand *ClipNode
+	Offset  Point
 }
 
 // Canvas is an opaque white RGBA canvas.
 type Canvas struct {
 	Image *image.NRGBA
-	masks map[clipKey][]float64
+	masks map[clipKey]spanSet
 }
 
 type clipKey struct {
@@ -123,7 +205,7 @@ func New(w, h int) *Canvas {
 	for i := range c.Pix {
 		c.Pix[i] = 255
 	}
-	return &Canvas{Image: c, masks: make(map[clipKey][]float64)}
+	return &Canvas{Image: c, masks: make(map[clipKey]spanSet)}
 }
 
 const subScanlines = 16
@@ -186,7 +268,17 @@ func flattenPath(p Path, tolerance float64) (rings []polygon, closed []bool) {
 }
 
 // coverage rasterizes rings with a fill rule into a w*h buffer in [0,1].
-func coverage(rings []polygon, rule Rule, w, h int) []float64 {
+// span is a covered interval [x0,x1) of one sub-scanline.
+type span struct{ x0, x1 float64 }
+
+// spanSet lists, for each of h*subScanlines sub-scanlines, the sorted
+// disjoint covered intervals within [0,w). Boolean operations on span sets
+// are exact, so regions sharing an edge combine without anti-aliasing slivers.
+type spanSet [][]span
+
+// scan samples rings under rule at the center of each sub-scanline,
+// computing exact horizontal intervals.
+func scan(rings []polygon, rule Rule, w, h int) spanSet {
 	type edge struct {
 		x0, y0, x1, y1 float64
 		dir            int
@@ -207,7 +299,7 @@ func coverage(rings []polygon, rule Rule, w, h int) []float64 {
 			minY, maxY = math.Min(minY, e.y0), math.Max(maxY, e.y1)
 		}
 	}
-	out := make([]float64, w*h)
+	out := make(spanSet, h*subScanlines)
 	if len(edges) == 0 {
 		return out
 	}
@@ -219,7 +311,6 @@ func coverage(rings []polygon, rule Rule, w, h int) []float64 {
 	row1 := int(math.Min(float64(h), math.Ceil(maxY)))
 	var xs []crossing
 	for row := row0; row < row1; row++ {
-		acc := out[row*w : (row+1)*w]
 		for s := 0; s < subScanlines; s++ {
 			y := float64(row) + (float64(s)+0.5)/subScanlines
 			xs = xs[:0]
@@ -229,6 +320,7 @@ func coverage(rings []polygon, rule Rule, w, h int) []float64 {
 				}
 			}
 			sort.Slice(xs, func(i, j int) bool { return xs[i].x < xs[j].x })
+			var line []span
 			wind := 0
 			for i := 0; i+1 < len(xs); i++ {
 				wind += xs[i].dir
@@ -236,20 +328,99 @@ func coverage(rings []polygon, rule Rule, w, h int) []float64 {
 				if rule == EvenOdd {
 					inside = wind%2 != 0
 				}
-				if !inside {
+				a, b := math.Max(0, xs[i].x), math.Min(float64(w), xs[i+1].x)
+				if !inside || b <= a {
 					continue
 				}
-				a, b := math.Max(0, xs[i].x), math.Min(float64(w), xs[i+1].x)
-				for px := int(math.Floor(a)); px < w && float64(px) < b; px++ {
-					o := math.Min(b, float64(px+1)) - math.Max(a, float64(px))
-					if o > 0 {
-						acc[px] += o / subScanlines
-					}
+				if n := len(line); n > 0 && a <= line[n-1].x1 {
+					line[n-1].x1 = math.Max(line[n-1].x1, b)
+				} else {
+					line = append(line, span{a, b})
+				}
+			}
+			out[row*subScanlines+s] = line
+		}
+	}
+	return out
+}
+
+// full is the whole canvas.
+func full(w, h int) spanSet {
+	out := make(spanSet, h*subScanlines)
+	for i := range out {
+		out[i] = []span{{0, float64(w)}}
+	}
+	return out
+}
+
+// combine applies keep to membership in a and b along each sub-scanline.
+func combine(a, b spanSet, keep func(inA, inB bool) bool) spanSet {
+	out := make(spanSet, len(a))
+	bound := func(s []span, k int) float64 {
+		if k%2 == 0 {
+			return s[k/2].x0
+		}
+		return s[k/2].x1
+	}
+	for r := range a {
+		sa, sb := a[r], b[r]
+		var line []span
+		i, j := 0, 0
+		inA, inB, open := false, false, false
+		start := 0.0
+		for i < 2*len(sa) || j < 2*len(sb) {
+			var x float64
+			if j >= 2*len(sb) || (i < 2*len(sa) && bound(sa, i) <= bound(sb, j)) {
+				x = bound(sa, i)
+			} else {
+				x = bound(sb, j)
+			}
+			for i < 2*len(sa) && bound(sa, i) == x {
+				inA = !inA
+				i++
+			}
+			for j < 2*len(sb) && bound(sb, j) == x {
+				inB = !inB
+				j++
+			}
+			if k := keep(inA, inB); k && !open {
+				start, open = x, true
+			} else if !k && open {
+				line = append(line, span{start, x})
+				open = false
+			}
+		}
+		out[r] = line
+	}
+	return out
+}
+
+func intersect(a, b spanSet) spanSet {
+	return combine(a, b, func(x, y bool) bool { return x && y })
+}
+
+// coverageOf converts spans to per-pixel area coverage in [0,1].
+func coverageOf(set spanSet, w, h int) []float64 {
+	out := make([]float64, w*h)
+	for r, line := range set {
+		acc := out[r/subScanlines*w : (r/subScanlines+1)*w]
+		for _, sp := range line {
+			for px := int(math.Floor(sp.x0)); px < w && float64(px) < sp.x1; px++ {
+				if o := math.Min(sp.x1, float64(px+1)) - math.Max(sp.x0, float64(px)); o > 0 {
+					acc[px] += o / subScanlines
 				}
 			}
 		}
 	}
+	for i := range out {
+		out[i] = math.Min(out[i], 1)
+	}
 	return out
+}
+
+// coverage is the per-pixel area coverage of rings under rule.
+func coverage(rings []polygon, rule Rule, w, h int) []float64 {
+	return coverageOf(scan(rings, rule, w, h), w, h)
 }
 
 func transformRings(rings []polygon, m Matrix) []polygon {
@@ -372,64 +543,79 @@ func strokeRings(rings []polygon, closed []bool, s Stroke) [][]polygon {
 	return pieces
 }
 
-func (c *Canvas) size() (int, int) { return c.Image.Rect.Dx(), c.Image.Rect.Dy() }
-
-// mask intersects every clip chain; nil or empty clips leave drawing unclipped.
-func (c *Canvas) mask(clip []*ClipNode) []float64 {
-	w, h := c.size()
-	mask := make([]float64, w*h)
-	for i := range mask {
-		mask[i] = 1
+// area is the signed area of a ring.
+func area(r polygon) float64 {
+	var a float64
+	for i := range r {
+		p, q := r[i], r[(i+1)%len(r)]
+		a += p.X*q.Y - q.X*p.Y
 	}
-	for _, n := range clip {
-		m := c.region(n, 0, 0)
-		for i := range mask {
-			mask[i] = math.Min(mask[i], m[i])
-		}
-	}
-	return mask
+	return a / 2
 }
 
-func (c *Canvas) region(n *ClipNode, dx, dy float64) []float64 {
+func (c *Canvas) size() (int, int) { return c.Image.Rect.Dx(), c.Image.Rect.Dy() }
+
+// clipSpans intersects every clip chain; it returns nil, meaning
+// unclipped, for an empty clip.
+func (c *Canvas) clipSpans(clip []*ClipNode) spanSet {
+	var out spanSet
+	for _, n := range clip {
+		r := c.region(n, 0, 0)
+		if out == nil {
+			out = r
+		} else {
+			out = intersect(out, r)
+		}
+	}
+	return out
+}
+
+// clipped restricts set to the clip and returns its pixel coverage.
+func (c *Canvas) clipped(set spanSet, clip []*ClipNode) []float64 {
+	w, h := c.size()
+	if m := c.clipSpans(clip); m != nil {
+		set = intersect(set, m)
+	}
+	return coverageOf(set, w, h)
+}
+
+// mask is the pixel coverage of the clip.
+func (c *Canvas) mask(clip []*ClipNode) []float64 {
+	w, h := c.size()
+	return c.clipped(full(w, h), clip)
+}
+
+func (c *Canvas) region(n *ClipNode, dx, dy float64) spanSet {
 	w, h := c.size()
 	if n == nil {
-		m := make([]float64, w*h)
-		for i := range m {
-			m[i] = 1
-		}
-		return m
+		return full(w, h)
 	}
 	key := clipKey{n, dx, dy}
 	if m, ok := c.masks[key]; ok {
 		return m
 	}
-	var out []float64
+	var out spanSet
 	if n.Op == ClipOffset {
 		out = c.region(n.Base, dx+n.Offset.X, dy+n.Offset.Y)
 	} else {
-		rings, _ := flattenPath(n.Area, 0.1)
-		area := coverage(transformRings(rings, Matrix{M11: 1, M22: 1, Dx: dx, Dy: dy}), n.Rule, w, h)
-		for i := range area {
-			area[i] = math.Min(area[i], 1)
+		var area spanSet
+		if n.Operand != nil {
+			area = c.region(n.Operand, dx, dy)
+		} else {
+			rings, _ := flattenPath(n.Area, 0.1)
+			area = scan(transformRings(rings, Matrix{M11: 1, M22: 1, Dx: dx, Dy: dy}), n.Rule, w, h)
 		}
 		if n.Op == ClipReplace {
 			out = area
 		} else {
-			base := c.region(n.Base, dx, dy)
-			out = make([]float64, w*h)
-			for i := range out {
-				a, b := base[i], area[i]
-				switch n.Op {
-				case ClipIntersect:
-					out[i] = math.Min(a, b)
-				case ClipUnion:
-					out[i] = math.Max(a, b)
-				case ClipXor:
-					out[i] = math.Abs(a - b)
-				case ClipDifference:
-					out[i] = math.Min(a, 1-b)
-				}
-			}
+			keep := map[ClipOp]func(a, b bool) bool{
+				ClipIntersect:  func(a, b bool) bool { return a && b },
+				ClipUnion:      func(a, b bool) bool { return a || b },
+				ClipXor:        func(a, b bool) bool { return a != b },
+				ClipDifference: func(a, b bool) bool { return a && !b },
+				ClipComplement: func(a, b bool) bool { return b && !a },
+			}[n.Op]
+			out = combine(c.region(n.Base, dx, dy), area, keep)
 		}
 	}
 	c.masks[key] = out
@@ -450,9 +636,9 @@ func blend(dst *image.NRGBA, i int, c color.NRGBA, a float64) {
 	}
 }
 
-func (c *Canvas) paint(cov []float64, p Paint, clip []*ClipNode) error {
+// paint composites p over pixels with coverage cov, already clipped.
+func (c *Canvas) paint(cov []float64, p Paint) error {
 	w, h := c.size()
-	mask := c.mask(clip)
 	var inv Matrix
 	if p.Pattern != nil {
 		var ok bool
@@ -460,25 +646,29 @@ func (c *Canvas) paint(cov []float64, p Paint, clip []*ClipNode) error {
 			return errors.New("singular pattern transform")
 		}
 	}
+	if p.Gradient != nil && len(p.Gradient.Stops) == 0 {
+		return errors.New("gradient without stops")
+	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			a := math.Min(cov[y*w+x], 1) * mask[y*w+x]
+			a := cov[y*w+x]
 			if a <= 0 {
 				continue
 			}
 			col := p.Color
-			if p.Pattern != nil {
+			switch {
+			case p.Gradient != nil:
+				col = p.Gradient.at(Point{float64(x) + .5, float64(y) + .5})
+			case p.Pattern != nil:
 				q := inv.Apply(Point{float64(x) + .5, float64(y) + .5})
 				b := p.Pattern.Bounds()
-				px := b.Min.X + int(math.Floor(q.X))%b.Dx()
-				py := b.Min.Y + int(math.Floor(q.Y))%b.Dy()
-				if px < b.Min.X {
-					px += b.Dx()
+				clamp := p.Wrap == WrapClamp
+				px, okx := wrapIndex(int(math.Floor(q.X)), b.Dx(), p.Wrap == WrapFlipX || p.Wrap == WrapFlipXY, clamp)
+				py, oky := wrapIndex(int(math.Floor(q.Y)), b.Dy(), p.Wrap == WrapFlipY || p.Wrap == WrapFlipXY, clamp)
+				if !okx || !oky {
+					continue
 				}
-				if py < b.Min.Y {
-					py += b.Dy()
-				}
-				col = color.NRGBAModel.Convert(p.Pattern.At(px, py)).(color.NRGBA)
+				col = color.NRGBAModel.Convert(p.Pattern.At(b.Min.X+px, b.Min.Y+py)).(color.NRGBA)
 			}
 			blend(c.Image, y*c.Image.Stride+x*4, col, a)
 		}
@@ -490,7 +680,7 @@ func (c *Canvas) paint(cov []float64, p Paint, clip []*ClipNode) error {
 func (c *Canvas) Fill(path Path, rule Rule, paint Paint, clip []*ClipNode) error {
 	w, h := c.size()
 	rings, _ := flattenPath(path, 0.05)
-	return c.paint(coverage(rings, rule, w, h), paint, clip)
+	return c.paint(c.clipped(scan(rings, rule, w, h), clip), paint)
 }
 
 // Stroke paints the outline of path with pen s.
@@ -510,14 +700,20 @@ func (c *Canvas) Stroke(path Path, s Stroke, paint Paint, clip []*ClipNode) erro
 		toPen = center.Then(inv)
 	}
 	rings, closed := flattenPath(path, 0.05)
-	cov := make([]float64, w*h)
+	// The outline is the union of segment, join and cap pieces: oriented
+	// alike, they cover it exactly under the nonzero rule.
+	var all []polygon
 	for _, piece := range strokeRings(transformRings(rings, toPen), closed, s) {
-		pc := coverage(transformRings(piece, fromPen), NonZero, w, h)
-		for i := range cov {
-			cov[i] = math.Max(cov[i], math.Min(pc[i], 1))
+		for _, r := range transformRings(piece, fromPen) {
+			if area(r) < 0 {
+				for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+					r[i], r[j] = r[j], r[i]
+				}
+			}
+			all = append(all, r)
 		}
 	}
-	return c.paint(cov, paint, clip)
+	return c.paint(c.clipped(scan(all, NonZero, w, h), clip), paint)
 }
 
 // Image composites src pixels of img placed by m (image pixels to canvas),
@@ -634,8 +830,7 @@ func (c *Canvas) FillGouraud(mesh []Triangle, clip []*ClipNode) error {
 			rings[i][1], rings[i][2] = rings[i][2], rings[i][1]
 		}
 	}
-	cov := coverage(rings, NonZero, w, h)
-	mask := c.mask(clip)
+	cov := c.clipped(scan(rings, NonZero, w, h), clip)
 	bary := func(t Triangle, p Point) (float64, float64, float64, bool) {
 		d := (t.P[1].Y-t.P[2].Y)*(t.P[0].X-t.P[2].X) + (t.P[2].X-t.P[1].X)*(t.P[0].Y-t.P[2].Y)
 		if d == 0 {
@@ -647,7 +842,7 @@ func (c *Canvas) FillGouraud(mesh []Triangle, clip []*ClipNode) error {
 	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			a := math.Min(cov[y*w+x], 1) * mask[y*w+x]
+			a := cov[y*w+x]
 			if a <= 0 {
 				continue
 			}

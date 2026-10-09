@@ -6,11 +6,11 @@ The sole external Go dependency is [golittlecms](https://github.com/mgilbir/goli
 for color management; no cgo or native runtime is needed.
 
 Supports WMF, EMF, and EMF+ containers, typed record decoding, renderer-facing
-command streaming, object/state checks, bitmap decoding, and GDI playback of
-paths, transforms, clipping and bitmaps through a small backend interface.
-Text is laid out with GDI's rules through an optional text backend.
-Rasterization, font realization, shaping and EMF+ drawing belong to the
-consuming renderer.
+command streaming, object/state checks, bitmap decoding, and GDI and EMF+
+playback of paths, transforms, clipping and bitmaps through a small backend
+interface. GDI text is laid out with GDI's rules through an optional text
+backend. Rasterization, font realization and shaping belong to the consuming
+renderer.
 The supported record/encoding inventory and outstanding format coverage are
 explicit in [COVERAGE.md](COVERAGE.md).
 
@@ -95,7 +95,7 @@ _, err := gowemf.Play(data, gowemf.PlayOptions{
 }, backend) // FillPath, StrokePath and DrawImage
 ```
 
-`Play` replays the GDI stream of a WMF or EMF file. It keeps the playback device
+`Play` replays a WMF, EMF or EMF+ file. For GDI records it keeps the playback device
 context: SaveDC/RestoreDC, selected pens and brushes with stock objects and
 object-slot reuse, all eight mapping modes, window/viewport origins and extents,
 world transforms, background/fill/ROP2/stretch modes, arc direction, brush
@@ -104,14 +104,24 @@ receive geometry already in destination coordinates: paths of moves, lines,
 cubic Béziers and closures with a fill rule; effective paints (solid, hatch or
 pattern, after ROP2 and background mode); effective pens with caps, joins,
 dashes and a pen-space transform; images with an affine placement, source
-rectangle and opacity; and an immutable clip chain of path areas combined with
-intersect/union/xor/difference/replace/offset steps.
+rectangle and opacity; and an immutable clip chain of path areas and region
+trees combined with intersect/union/xor/difference/complement/replace/offset
+steps.
 
 The EMF header frame, or the WMF placeable bounds, is mapped onto `Destination`.
-WMF files without a placeable header need `PlayOptions.Placeable`. EMF+ files
-play only their GDI fallback, and only when `Stream.PreferGDI` is set: EMF+
-drawing is not implemented. Flood fill, region inversion, destination-dependent
-raster operations and other omissions are never skipped silently.
+WMF files without a placeable header need `PlayOptions.Placeable`. Flood fill,
+region inversion, destination-dependent raster operations and other omissions
+are never skipped silently.
+
+EMF+ files play their EMF+ records, together with the GDI records inside GetDC
+intervals; `Stream.PreferGDI` plays the GDI fallback of a Dual file instead.
+EMF+ playback keeps the GDI+ graphics state: Save/Restore, containers,
+world and page transforms, pixel offset, compositing and interpolation modes,
+and clipping with all combine modes and region trees. It resolves solid,
+hatch, texture and linear-gradient brushes (`PaintLinearGradient`), pens with
+caps, joins, dashes and dash offsets, shapes, paths, cardinal splines and
+bitmap images. EMF+ text, path gradients, custom and compound pens and
+metafile images are reported as unsupported.
 
 Region painting (FillRgn, PaintRgn, FrameRgn and the WMF region records),
 monochrome pattern brushes colored by the text and background colors, logical
@@ -297,8 +307,9 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-`Play` to spine's renderer; add region painting, gradients, double-byte text and
-EMF+ drawing to playback; and compare against Windows GDI/GDI+ when available. Windows remains
+`Play` to spine's renderer; add double-byte text, EMF+ text, path gradients and
+custom or compound pens to playback; and compare against Windows GDI/GDI+ when
+available. Windows remains
 the primary playback oracle. LibreOffice agreement covers the generated scenes in
 ORACLES.md and diverges from the specifications in several pinned cases. No
 pixel-perfect or full-format rendering claim is made. Fonts and metrics must be

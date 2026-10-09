@@ -57,7 +57,7 @@ func (b *backend) clip(c gowemf.Clip) []*raster.ClipNode {
 		if n, ok := b.nodes[r]; ok {
 			return n
 		}
-		n := &raster.ClipNode{Base: convert(r.Base), Op: raster.ClipOp(r.Op), Area: rpath(r.Area), Rule: raster.Rule(r.Rule), Offset: raster.Point(r.Offset)}
+		n := &raster.ClipNode{Base: convert(r.Base), Op: raster.ClipOp(r.Op), Area: rpath(r.Area), Rule: raster.Rule(r.Rule), Operand: convert(r.Operand), Offset: raster.Point(r.Offset)}
 		b.nodes[r] = n
 		return n
 	}
@@ -73,7 +73,13 @@ func rpaint(p gowemf.Paint) (raster.Paint, error) {
 	case gowemf.PaintSolid:
 		return raster.Paint{Color: p.Color}, nil
 	case gowemf.PaintPattern:
-		return raster.Paint{Pattern: p.Pattern, PatternTransform: raster.Matrix(p.PatternTransform)}, nil
+		return raster.Paint{Pattern: p.Pattern, PatternTransform: raster.Matrix(p.PatternTransform), Wrap: raster.Wrap(p.Wrap)}, nil
+	case gowemf.PaintLinearGradient:
+		g := &raster.Gradient{Transform: raster.Matrix(p.Gradient.Transform), Wrap: raster.Wrap(p.Gradient.Wrap)}
+		for _, s := range p.Gradient.Stops {
+			g.Stops = append(g.Stops, raster.Stop{Offset: s.Offset, Color: s.Color})
+		}
+		return raster.Paint{Gradient: g}, nil
 	}
 	return raster.Paint{}, fmt.Errorf("reference backend does not implement paint kind %d", p.Kind)
 }

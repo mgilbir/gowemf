@@ -153,10 +153,13 @@ Generated WMF playback scenes use MEMORYMETAFILE.
 ### GDI playback scenes
 
 `Play` output is rasterized by a test-only reference backend written separately
-from the playback code: it flattens its own curves, strokes in pen space, takes
+from the playback code. It flattens its own curves, strokes in pen space, takes
 coverage on 16 sub-scanlines with exact horizontal spans, and composites in sRGB
-onto white like the LibreOffice export. Its coverage, stroke-width and comparison
-metric each have generated tests. It centers lines on device pixels using
+onto white like the LibreOffice export. A stroke is the union of its segment,
+join and cap pieces. Clip regions are combined as exact span sets, so regions
+sharing a fractional edge leave no anti-aliased sliver. Coverage, stroke width,
+curved-stroke solidity, exact clip combination and the comparison metric each
+have generated tests. It centers lines on device pixels using
 `Stroke.PixelCenter`.
 
 There are eight 96x64 agreement scenes. Four EMF scenes combine the requested
@@ -256,6 +259,62 @@ region work budget, multi-rectangle regions and WMF clip regions) were each
 caught by the offline tests; those touching a scene also fail its probes.
 The pinned corpus now plays without reported omissions once a text backend is
 present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
+
+### EMF+ playback scenes
+
+Seven EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
+tolerance:
+- `plus-shapes.emf`: rectangles, an ellipse, a clockwise pie, an
+  alternate-filled path, a polygon, a wide line and a translucent fill.
+- `plus-transforms.emf`: a rotated world, a container mapping, Save/Restore and
+  an inch page unit.
+- `plus-clip.emf`: an excluded rectangle and a Complement region tree.
+- `plus-clip-path.emf`: a path clip united with a rectangle, and xor.
+- `plus-order.emf`: prepended and appended transform records, a Bézier and a
+  closed cardinal spline.
+- `plus-pens.emf`: wide pens, round caps, a clockwise arc and an open spline.
+- `plus-image.emf`: a PNG-encoded bitmap placed in a rectangle and on a
+  parallelogram.
+
+Geometry follows the default PixelOffsetMode (pixel centers at integer
+coordinates), half a pixel from LibreOffice's placement; the scenes keep that
+within the tolerance and away from the canvas border.
+
+| Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
+| --- | --- | --- |
+| `lo-plus-page-change.emf` | A second SetPageTransform is ignored; drawing keeps the first page units | Each SetPageTransform replaces the page transform |
+| `lo-plus-raw-bitmap.emf` | Uncompressed (BitmapDataTypePixel) bitmaps draw nothing | Raw 32bppARGB pixels placed like encoded ones |
+| `lo-plus-texture.emf` | Texture brushes paint nothing | Image tiled through the brush transform |
+| `lo-plus-gradients.emf` | Linear gradients drawn in about eleven discrete bands | Continuous interpolation |
+| `lo-plus-nearest.emf` | NearestNeighbor interpolation ignored; images smoothed | Nearest-neighbor hint passed to the backend |
+
+LibreOffice agrees with playback for page units, containers, Save/Restore, all
+combine modes exercised, region trees, path clips, the clockwise angle
+convention, cardinal splines, pen caps and image placement. Its banded
+gradients follow the same direction, preset stops and mirrored wrap.
+
+Forty-five planted EMF+ defects were each caught by the offline tests before
+being restored, and those touching a scene also fail the LibreOffice comparison:
+- the pixel offset and its Half mode, DPI axes and page scale;
+- transform order, rotation direction, container mapping and container clips;
+- Restore, both combine-mode tables, infinite regions and world-space clip
+  offsets;
+- the path close flag and FillPath rule;
+- the gradient origin, brush transform and blend factors, and the texture
+  transform;
+- world and pixel pen widths, the default miter limit, dash scaling and caps;
+- arc direction and geometric angles, spline tension, closed-curve wrapping
+  and winding;
+- image shear, source offset, cache invalidation and per-object pixel budget
+  for images and pen textures;
+- SourceCopy reporting, skipped-container contents, both clip-step limits, the
+  hatch rendering origin and ARGB channel order;
+- closed DrawLines, multi-rectangle fills, Clear clipping and FillRegion.
+
+Two latent defects in the reference backend surfaced with these scenes: wide
+strokes of flattened curves were drawn faint, and clip differences left slivers
+on shared fractional edges. Both now have generated tests that fail on the old
+code, and every earlier scene was re-verified against LibreOffice afterwards.
 
 ### Text scenes
 

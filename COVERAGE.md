@@ -240,7 +240,10 @@ Interpretations where the specifications leave room or conflict:
   lower-left origin, per MS-EMF 2.3.1.7 and 2.3.1.5; the WMF StretchDIB and
   SetDIBToDev records follow the same rules. A lower-left source in a top-down
   DIB is reported unless the source is the whole bitmap. Source rectangles are
-  clamped to the bitmap and only existing pixels are drawn.
+  clamped to the bitmap and only existing pixels are drawn. A source
+  transform (xformSrc) that leaves the source with fractional edges maps it
+  exactly onto the destination, clipped there as for EMF+ images; GDI's own
+  integer rounding of such sources is not modeled.
 - ROP3 operations are classified by their index byte. SRCCOPY ignores DIB
   alpha. PolyDraw, PolylineTo and the "To" records continue from the current
   position, starting a new figure after a closed one.
@@ -301,7 +304,7 @@ played by the GDI player, with its own device context.
 | Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, brush transform, clamped) | Hatch styles 6–52, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors, preset colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
 | Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (an unverified interpretation; see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
-| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, fractional source rectangles, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
+| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with whole-pixel or fractional source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
 | Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
 
 Interpretations where MS-EMFPLUS leaves room:
@@ -371,6 +374,10 @@ Interpretations where MS-EMFPLUS leaves room:
   boundaries are closed cardinal splines of unstated tension; blend positions
   are described only as running from a "midpoint" to an "endpoint"; focus
   scales give no scaling origin. Those are reported.
+- Image source rectangles are EmfPlusRectF values (MS-EMFPLUS 2.2.2.39) and
+  map exactly onto the destination. A fractional source is drawn from the
+  pixels enclosing it, clipped to the image of the exact rectangle (see
+  `ImageDraw`), so partial source pixels are cut at the destination's edge.
 - SourceCopy compositing replaces pixels. That equals source-over for opaque
   paint, which is drawn; translucent paint is reported. Clear requires an
   opaque color for the same reason.

@@ -2,6 +2,7 @@ package gowemf
 
 import (
 	"errors"
+	"image"
 	"image/color"
 	"math"
 	"strings"
@@ -691,9 +692,38 @@ func TestPlayEMFPlusImages(t *testing.T) {
 	if len(skipped) != 0 || b.images[0].draw.Source.Dx() != 2 {
 		t.Fatal("transparent clamp", skipped)
 	}
-	_, skipped = plusPlay(t, plusScene(96, 64, img, plusRec(PlusDrawImageRecord, 4, dwords(0xffffffff, 2), fl(0.5, 0, 1, 1), fl(0, 0, 1, 1))), PlayOptions{})
-	if len(skipped) != 1 || !strings.Contains(skipped[0], "fractional") {
-		t.Fatal(skipped)
+	// A fractional source (an EmfPlusRectF) is drawn from the enclosing
+	// pixels, mapped exactly, with a clip layer for the exact rectangle.
+	if len(b.images[0].clip) != 0 {
+		t.Fatal("whole-pixel source clipped", b.images[0].clip)
+	}
+	for _, c := range []struct {
+		src, dst [4]float64
+		attrs    uint32
+		source   image.Rectangle
+		area     []Point
+	}{
+		{[4]float64{0.5, 0, 1, 1}, [4]float64{0, 0, 1, 1}, 0xffffffff, image.Rect(0, 0, 2, 1), []Point{{0, 0}, {1, 0}, {1, 1}, {0, 1}}},
+		{[4]float64{0, 0, 1.5, 2}, [4]float64{10, 10, 30, 40}, 0xffffffff, image.Rect(0, 0, 2, 2), []Point{{10, 10}, {40, 10}, {40, 50}, {10, 50}}},
+		{[4]float64{0.25, 0.5, 1.5, 1}, [4]float64{0, 0, 60, 40}, 0xffffffff, image.Rect(0, 0, 2, 2), []Point{{0, 0}, {60, 0}, {60, 40}, {0, 40}}},
+		// Partly outside the bitmap under transparent clamping: the layer
+		// stops at the bitmap's edge.
+		{[4]float64{1.5, -0.5, 1, 2}, [4]float64{0, 0, 20, 40}, 7, image.Rect(1, 0, 2, 2), []Point{{0, 10}, {10, 10}, {10, 40}, {0, 40}}},
+	} {
+		draw := plusRec(PlusDrawImageRecord, 4, dwords(c.attrs, 2), fl(c.src[:]...), fl(c.dst[:]...))
+		b, skipped = plusPlay(t, plusScene(96, 64, half, img, clamp, draw), PlayOptions{})
+		if len(skipped) != 0 || len(b.images) != 1 {
+			t.Fatal(c.src, skipped)
+		}
+		d, clip := b.images[0].draw, b.images[0].clip
+		sx, sy := c.dst[2]/c.src[2], c.dst[3]/c.src[3]
+		want := Matrix{M11: sx, M22: sy, Dx: c.dst[0] - c.src[0]*sx, Dy: c.dst[1] - c.src[1]*sy}
+		if d.Source != c.source || math.Abs(d.Transform.M11-want.M11) > 1e-9 || math.Abs(d.Transform.M22-want.M22) > 1e-9 || math.Abs(d.Transform.Dx-want.Dx) > 1e-9 || math.Abs(d.Transform.Dy-want.Dy) > 1e-9 {
+			t.Fatalf("%v: %+v", c.src, d)
+		}
+		if len(clip) != 1 || clip[0].Op != ClipReplace || clip[0].Base != nil || !pointsNear(clip[0].Area.Points, c.area...) {
+			t.Fatalf("%v: clip %+v", c.src, clip)
+		}
 	}
 	// The pixel budget is charged once per image object.
 	data := plusScene(96, 64, img, draw, draw, draw)

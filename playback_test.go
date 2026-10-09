@@ -690,3 +690,23 @@ func TestPlayEMFMicrometers(t *testing.T) {
 		}
 	}
 }
+
+// TestPlayFractionalBlitSource scales a StretchBlt source by its xformSrc, so
+// the bitmap rectangle has fractional edges; the drawing stays within the
+// destination.
+func TestPlayFractionalBlitSource(t *testing.T) {
+	info, bits := sceneDIB(4, 4, false, quadrants)
+	r := emfBlt(EMRStretchBlt, 10, 10, 30, 30, 0x00cc0020, 1, 1, 3, 3, info, bits)
+	copy(r[52:], fl(0.5, 0, 0, 0.5)) // source (0.5, 0.5) to (2, 2)
+	b := record(t, emfScene(96, 64, 1, r), PlayOptions{})
+	if len(b.images) != 1 {
+		t.Fatal(b.images)
+	}
+	d, clip := b.images[0].draw, b.images[0].clip
+	if d.Source != image.Rect(0, 0, 2, 2) || !pointsNear([]Point{d.Transform.Apply(Point{0.5, 0.5}), d.Transform.Apply(Point{2, 2})}, Point{10, 10}, Point{40, 40}) {
+		t.Fatalf("%+v", d)
+	}
+	if len(clip) != 1 || clip[0].Op != ClipReplace || !pointsNear(clip[0].Area.Points, Point{10, 10}, Point{40, 10}, Point{40, 40}, Point{10, 40}) {
+		t.Fatalf("clip %+v", clip)
+	}
+}

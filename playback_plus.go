@@ -1164,9 +1164,6 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 	if src.Width <= 0 || src.Height <= 0 {
 		return nil
 	}
-	if src.X != math.Floor(src.X) || src.Y != math.Floor(src.Y) || src.Width != math.Floor(src.Width) || src.Height != math.Floor(src.Height) {
-		return p.unsupported(r, "EMF+ fractional image source rectangle")
-	}
 	obj, err := p.plusObjectAt(r, uint32(v.ImageID))
 	if err != nil {
 		return err
@@ -1216,9 +1213,10 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 		return p.unsupported(r, "EMF+ SourceCopy compositing of an image with alpha")
 	}
 	draw := ImageDraw{Image: im, Transform: place, Opacity: 1, Smooth: p.plus.interpolation != 5}
-	draw.Source = sourceRect(Point{src.X, src.Y}, Point{src.Width, src.Height}, bounds)
+	o, size := Point{src.X, src.Y}, Point{src.Width, src.Height}
+	draw.Source = sourceRect(o, size, bounds)
 	if draw.Source.Empty() {
 		return nil
 	}
-	return p.backend.DrawImage(draw, p.plusCurrentClip())
+	return p.backend.DrawImage(draw, sourceClip(draw, o, size, p.plusCurrentClip()))
 }

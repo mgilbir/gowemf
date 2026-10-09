@@ -262,7 +262,7 @@ present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
 
 ### EMF+ playback scenes
 
-Seven EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
+Eight EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
 tolerance:
 - `plus-shapes.emf`: rectangles, an ellipse, a clockwise pie, an
   alternate-filled path, a polygon, a wide line and a translucent fill.
@@ -275,6 +275,9 @@ tolerance:
 - `plus-pens.emf`: wide pens, round caps, a clockwise arc and an open spline.
 - `plus-image.emf`: a PNG-encoded bitmap placed in a rectangle and on a
   parallelogram.
+- `plus-image-fraction.emf`: source rectangles with half-pixel edges, scaled
+  3 times into a rectangle and onto points. Drawing the enclosing whole
+  pixels without the exact clip leaves 216 unmatched pixels.
 
 Geometry follows the default PixelOffsetMode (pixel centers at integer
 coordinates), half a pixel from LibreOffice's placement; the scenes keep that

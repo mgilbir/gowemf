@@ -163,7 +163,7 @@ func (p *player) blit(b blit) error {
 	if draw.Source.Empty() {
 		return nil
 	}
-	return p.backend.DrawImage(draw, p.currentClip())
+	return p.backend.DrawImage(draw, sourceClip(draw, b.src, b.srcSize, p.currentClip()))
 }
 
 // topDownFullSource reports a source rectangle covering the whole bitmap, for
@@ -183,6 +183,28 @@ func sourceRect(o, s Point, bounds image.Rectangle) image.Rectangle {
 	r := image.Rect(clamp(math.Floor(x0), bounds.Min.X, bounds.Max.X), clamp(math.Floor(y0), bounds.Min.Y, bounds.Max.Y),
 		clamp(math.Ceil(x1), bounds.Min.X, bounds.Max.X), clamp(math.Ceil(y1), bounds.Min.Y, bounds.Max.Y))
 	return r.Intersect(bounds)
+}
+
+// sourceClip handles a source rectangle (origin o, size s, in bitmap pixels)
+// whose edges are not whole pixels. draw.Source encloses it and
+// draw.Transform maps the exact rectangle onto the destination, so clip gains
+// a layer limiting drawing to that rectangle, less any part outside
+// draw.Source (the bitmap). Whole-pixel sources leave clip unchanged.
+func sourceClip(draw ImageDraw, o, s Point, clip Clip) Clip {
+	src := draw.Source
+	x0 := math.Max(math.Min(o.X, o.X+s.X), float64(src.Min.X))
+	x1 := math.Min(math.Max(o.X, o.X+s.X), float64(src.Max.X))
+	y0 := math.Max(math.Min(o.Y, o.Y+s.Y), float64(src.Min.Y))
+	y1 := math.Min(math.Max(o.Y, o.Y+s.Y), float64(src.Max.Y))
+	if x0 == float64(src.Min.X) && x1 == float64(src.Max.X) && y0 == float64(src.Min.Y) && y1 == float64(src.Max.Y) {
+		return clip
+	}
+	t := draw.Transform
+	area := Path{
+		Verbs:  []PathVerb{PathMoveTo, PathLineTo, PathLineTo, PathLineTo, PathClose},
+		Points: []Point{t.Apply(Point{x0, y0}), t.Apply(Point{x1, y0}), t.Apply(Point{x1, y1}), t.Apply(Point{x0, y1})},
+	}
+	return append(clip[:len(clip):len(clip)], &ClipRegion{Op: ClipReplace, Area: area, Rule: NonZero, depth: 1})
 }
 
 // patBlt fills the destination with black, white or the selected brush.

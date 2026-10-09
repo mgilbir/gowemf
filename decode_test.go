@@ -389,6 +389,11 @@ func TestPlusFixedRecordNoPayload(t *testing.T) {
 }
 
 func FuzzDecode(f *testing.F) {
+	f.Add(uint8(EMFPlus), terminalGraphicsFixture().Raw)
+	f.Add(uint8(EMFPlus), testRecord(EMFPlus, PlusSetTSClipRecord, 0x8001, []byte{0x80, 0x80, 0x90, 0x90}).Raw)
+	font := make([]byte, 324)
+	put32(font, 0, 1)
+	f.Add(uint8(EMF), testRecord(EMF, EMRExtCreateFontIndirectW, 0, font).Raw)
 	for kind, payload := range effectFixtures() {
 		f.Add(uint8(EMFPlus), effectRecord(effectGUIDBytes(kind), payload).Raw)
 	}

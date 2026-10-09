@@ -11,10 +11,14 @@ import (
 
 // ImageLimits bound encoded input and pixel output before allocation. Decoder
 // temporary storage is additional to the returned image. Defaults: 16 MiB
-// encoded input and 16 million pixels (64 MiB for an NRGBA result).
-type ImageLimits struct{ MaxBytes, MaxPixels uint64 }
+// encoded input, 16 million pixels (64 MiB for NRGBA), and 128 MiB decoded-byte
+// storage for TIFF inflation and effect working buffers.
+type ImageLimits struct{ MaxBytes, MaxPixels, MaxDecodedBytes uint64 }
 
 func (l ImageLimits) defaults() ImageLimits {
+	if l.MaxDecodedBytes == 0 {
+		l.MaxDecodedBytes = 128 << 20
+	}
 	if l.MaxBytes == 0 {
 		l.MaxBytes = 16 << 20
 	}

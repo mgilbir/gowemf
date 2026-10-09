@@ -77,11 +77,19 @@ type WMFHeader struct {
 // EMFHeader exposes the common 88-byte header. Extensions remain in the raw
 // EMR_HEADER record; Bounds are logical units and Frame is in .01 millimeters.
 type EMFHeader struct {
+	Description             []byte // UTF-16LE, including any terminators
+	Extension1              *EMFHeaderExtension1
+	Micrometers             *Size
 	Bounds, Frame           Rect
 	Version, Bytes, Records uint32
 	Handles                 uint16
 	PaletteEntries          uint32
 	Device, Millimeters     Size
+}
+
+type EMFHeaderExtension1 struct {
+	OpenGL      bool
+	PixelFormat []byte
 }
 
 type EMFPlusHeader struct {

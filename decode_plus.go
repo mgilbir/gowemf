@@ -304,6 +304,10 @@ func (c *cursor) emfplus(typ uint32, flags uint16) any {
 		v = c.driverString(flags)
 	case PlusSerializableObjectRecord:
 		v = c.serializableEffect()
+	case PlusSetTSGraphicsRecord:
+		v = c.tsGraphics(flags)
+	case PlusSetTSClipRecord:
+		v = c.tsClip(flags)
 	default:
 		return c.unsupported()
 	}

@@ -83,7 +83,31 @@ func (c *cursor) emf(typ uint32) any {
 		f := Font{Handle: c.dword(), Height: c.long(), Width: c.long(), Escapement: c.long(), Orientation: c.long(), Weight: c.long(), Unicode: true}
 		c.fontFlags(&f)
 		f.FaceName = c.take(64)
-		f.Extensions = c.take(uint64(len(c.b) - c.pos))
+		start := c.pos
+		f.Extensions = c.b[start:len(c.b):len(c.b)]
+		if c.err == nil && len(c.b)-12 >= 320 {
+			e := &FontExtension{FullName: c.take(128), Style: c.take(64)}
+			f.Extended = e
+			if len(c.b)-12 == 320 {
+				c.dword()
+				e.StyleSize = c.dword()
+				c.take(16)
+				e.Panose = c.take(10)
+				c.take(2)
+			} else {
+				e.Script = c.take(64)
+				if c.dword() != 0x08007664 {
+					c.bad("font design-vector signature")
+				}
+				n := uint64(c.dword())
+				if n > 16 {
+					c.bad("font design-vector axes")
+				}
+				e.DesignAxes = c.ints(n, 4)
+			}
+		} else {
+			c.take(uint64(len(c.b) - c.pos))
+		}
 		return f
 	case 95:
 		return c.emfPen()

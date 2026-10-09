@@ -20,7 +20,10 @@ type StreamOptions struct {
 // fragment for a continued object. Bodies/views must be treated as immutable.
 // Effect identifies the most recent serialized effect for DrawImagePoints
 // commands with the E flag. It is nil for other commands, including DrawImage.
+// ColorState is an immutable saved/restored GDI color-state snapshot; it is nil
+// for EMF+ commands. It records selections without automatically filtering pixels.
 type Command struct {
+	ColorState  *ColorPlaybackState
 	Effect      *PlusEffect
 	Source      Record
 	Body        any
@@ -65,6 +68,8 @@ func Stream(data []byte, options StreamOptions, visit func(Command) error) (Head
 		return Header{}, failure(0, "object table size", ErrLimit)
 	}
 	s := streamState{options: options, kinds: make([]uint8, int(slots)), paletteCounts: make([]uint32, int(slots)), assembler: PlusAssembler{Limits: options.Decoding}}
+	s.color = initialColorState()
+	s.colorObjects = make(map[uint32]colorObjectEntry)
 	if h.WMF != nil {
 		s.free = make(freeHandles, int(slots))
 		s.generations = make([]uint64, int(slots))
@@ -116,6 +121,9 @@ func Stream(data []byte, options StreamOptions, visit func(Command) error) (Head
 		} else if err := s.gdi(&cmd); err != nil {
 			return err
 		}
+		if r.Format != EMFPlus {
+			cmd.ColorState = s.color
+		}
 		if v, ok := cmd.Body.(PlusImageDraw); ok && v.Effect {
 			cmd.Effect = s.effect
 		}
@@ -144,6 +152,10 @@ func streamError(r Record, err error) error {
 }
 
 type streamState struct {
+	color            *ColorPlaybackState
+	colorObjects     map[uint32]colorObjectEntry
+	colorGeneration  uint64
+	savedColors      []*ColorPlaybackState
 	effect           *PlusEffect
 	options          StreamOptions
 	kinds            []uint8
@@ -214,6 +226,10 @@ func (s *streamState) gdi(cmd *Command) error {
 			return malformed(r.Offset, "EMF object creation handle")
 		}
 		s.kinds[id] = kind
+		if v, ok := b.(ColorSpaceObject); ok {
+			s.colorGeneration++
+			s.colorObjects[id] = colorObjectEntry{v.Space, s.colorGeneration}
+		}
 		if r.Format == WMF {
 			s.generations[id]++
 		}
@@ -264,8 +280,9 @@ func (s *streamState) gdi(cmd *Command) error {
 		}
 		if typ == EMRDeleteColorSpace {
 			s.kinds[id] = 0
+			s.deleteColorObject(id)
 		}
-		return nil
+		return s.changeColorState(r, b)
 	}
 	if r.Format == WMF {
 		selectObject, deleteObject, save, restore = typ == 0x2d, typ == 0xf0, typ == 0x1e, typ == 0x27
@@ -289,6 +306,9 @@ func (s *streamState) gdi(cmd *Command) error {
 			return malformed(r.Offset, "color space requires SetColorSpace")
 		}
 		if deleteObject {
+			if s.kinds[id] == kindColorSpace {
+				s.deleteColorObject(id)
+			}
 			s.kinds[id] = 0
 			if r.Format == WMF {
 				heap.Push(&s.free, id)
@@ -306,6 +326,7 @@ func (s *streamState) gdi(cmd *Command) error {
 			return failure(r.Offset, "saved states", ErrLimit)
 		}
 		s.saved++
+		s.savedColors = append(s.savedColors, s.color)
 		if r.Format == WMF {
 			s.savedPalettes = append(s.savedPalettes, s.paletteSelection)
 		}
@@ -322,6 +343,18 @@ func (s *streamState) gdi(cmd *Command) error {
 			return malformed(r.Offset, "restore state index")
 		}
 		s.saved = uint32(level)
+		s.color = s.savedColors[int(level)]
+		s.savedColors = s.savedColors[:int(level)]
+		if s.color.handle != 0 {
+			entry, ok := s.colorObjects[s.color.handle]
+			if !ok || entry.generation != s.color.generation {
+				next := *s.color
+				next.Source = ColorSpace{Type: ColorSRGB}
+				next.handle = 0
+				next.generation = 0
+				s.color = &next
+			}
+		}
 		if r.Format == WMF {
 			s.paletteSelection = s.savedPalettes[int(level)]
 			s.savedPalettes = s.savedPalettes[:int(level)]
@@ -356,7 +389,7 @@ func (s *streamState) gdi(cmd *Command) error {
 			s.path = 0
 		}
 	}
-	return nil
+	return s.changeColorState(r, b)
 }
 
 func (s *streamState) plus(r Record, body any) error {

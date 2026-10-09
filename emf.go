@@ -1,7 +1,7 @@
 package gowemf
 
-// MS-EMF 2.2.9, 2.3.3 and 2.3.4. Header extensions and drawing bodies are
-// retained without interpretation; only the common header is decoded here.
+// MS-EMF 2.2.9–11, 2.3.3 and 2.3.4. Variable buffers determine where the fixed
+// header ends; a long description does not by itself imply header extensions.
 func (p *parser) emf() error {
 	b := p.data
 	if len(b) < 88 {
@@ -38,6 +38,36 @@ func (p *parser) emf() error {
 			chars, pos := uint64(u32(r[60:])), uint64(u32(r[64:]))
 			if chars != 0 && (pos < 88 || pos%2 != 0 || pos > n || chars*2 > n-pos) {
 				return malformed(60, "EMF description range")
+			}
+			first := n
+			if chars != 0 {
+				h.Description = r[int(pos):int(pos+chars*2):int(pos+chars*2)]
+				first = pos
+			}
+			if first >= 100 {
+				length, offset := uint64(u32(r[88:])), uint64(u32(r[92:]))
+				gl := u32(r[96:])
+				if gl > 1 {
+					return malformed(96, "header OpenGL flag")
+				}
+				e := &EMFHeaderExtension1{OpenGL: gl != 0}
+				h.Extension1 = e
+				if length != 0 {
+					if offset < 100 || offset > n || length > n-offset {
+						return malformed(88, "header pixel format span")
+					}
+					if chars != 0 && offset < pos+chars*2 && offset+length > pos {
+						return malformed(88, "header variable buffers overlap")
+					}
+					e.PixelFormat = r[int(offset):int(offset+length):int(offset+length)]
+					if offset < first {
+						first = offset
+					}
+				}
+				if first >= 108 {
+					value := size(r[100:])
+					h.Micrometers = &value
+				}
 			}
 		} else if typ == 1 {
 			return malformed(off, "duplicate EMF header")

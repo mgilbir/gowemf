@@ -10,6 +10,13 @@ Incorporated. GIF(sm) is a Service Mark property of CompuServe Incorporated.
 
 Reference: https://www.w3.org/Graphics/GIF/spec-gif89a.txt
 
+## TIFF format reference
+
+The TIFF implementation is independently written from the TIFF Revision 6.0
+specification (Aldus Corporation, June 3, 1992), consulted at
+https://trap.mtview.ca.us/~tom/tech/file-formats/TIFF.html . No TIFF implementation
+code or external binary image fixtures are included.
+
 ## Color-management dependency
 
 gowemf uses `github.com/mgilbir/golittlecms` at revision

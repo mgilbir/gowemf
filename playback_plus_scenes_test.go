@@ -48,6 +48,12 @@ func plusScenes() []renderScene {
 		{name: "plus-image-fraction.emf", data: scenePlusImageFraction(), probes: []probe{
 			{12, 12, cRed}, {26, 12, cLime}, {12, 26, cBlue}, {26, 26, cYellow}, {7, 16, cWhite}, {32, 16, cWhite}, {16, 7, cWhite}, {16, 32, cWhite},
 			{52, 12, cRed}, {68, 12, cLime}, {52, 28, cBlue}, {68, 28, cYellow}, {47, 20, cWhite}, {72, 20, cWhite}, {60, 7, cWhite}, {60, 32, cWhite}}},
+		{name: "plus-metafile-image.emf", data: scenePlusMetafileImage(false), probes: []probe{
+			{12, 12, cRed}, {28, 24, cRed}, {52, 20, cBlue}, {6, 30, cWhite}, {44, 6, cWhite},
+			{56, 52, cRed}, {80, 52, cBlue}, {70, 52, cWhite}, {48, 52, cWhite}}},
+		{name: "lo-plus-metafile-source.emf", divergence: "the source rectangle of a metafile image is ignored; the whole picture is drawn",
+			data:   scenePlusMetafileImage(true),
+			probes: []probe{{55, 52, cRed}, {80, 52, cBlue}, {62, 52, cWhite}, {12, 24, cRed}, {23, 24, cWhite}, {40, 24, cBlue}}, libreOffice: []probe{{62, 52, cRed}, {23, 24, cRed}}},
 		{name: "lo-plus-nearest.emf", divergence: "InterpolationModeNearestNeighbor is ignored; scaled images are smoothed",
 			data:   scenePlusNearest(),
 			probes: []probe{{10, 10, cRed}, {22, 16, cRed}, {26, 16, cLime}, {38, 38, cYellow}}, libreOffice: []probe{{10, 10, cRed}, {22, 16, color.NRGBA{149, 103, 4, 255}}, {26, 16, color.NRGBA{90, 167, 2, 255}}}},
@@ -255,6 +261,37 @@ func scenePlusImageFraction() []byte {
 		plusObj(1, 5, pngQuadrants(16, cLime)),
 		plusRec(PlusDrawImageRecord, 1, dwords(0xffffffff, 2), fl(3.5, 3.5, 8, 8), fl(8, 8, 24, 24)),
 		plusRec(PlusDrawImagePointsRecord, 1, dwords(0xffffffff, 2), fl(2.5, 2.5, 8, 8), dwords(3), fl(48, 8, 72, 8, 48, 32)),
+	)
+}
+
+// Embedded metafiles drawn as images: a 40 x 20 pixel EMF, polygons in a
+// red left half and a blue right half each with a 2-unit white margin,
+// scaled twice onto (4,4)-(84,44), and a placeable WMF of the same picture in
+// 40 x 20 logical units onto (50,44)-(90,60). With part, the images show
+// only their source rectangles from x 10 onward: (10,0)-(40,20) of the EMF
+// onto (4,4)-(64,44), with red to about 21 and blue from about 27 (the
+// 40-pixel frame fills a 41-pixel image), and of the WMF onto
+// (50,44)-(90,60), where red ends at 50+8*4/3 and blue starts at 50+11*4/3.
+func scenePlusMetafileImage(part bool) []byte {
+	square := func(x0, x1 int32) []int32 { return []int32{x0, 2, x1, 2, x1, 18, x0, 18} }
+	emf := emfScene(40, 20, 3, emfSelect(nullPen), emfBrush(1, 0, red), emfBrush(2, 0, blue),
+		emfSelect(1), emfPoints(EMRPolygon, square(2, 18)...), emfSelect(2), emfPoints(EMRPolygon, square(21, 38)...))
+	wsquare := func(x0, x1 int16) []int16 { return []int16{x0, 2, x1, 2, x1, 18, x0, 18} }
+	wmf := wmfScene(40, 20, 3, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 20, 40),
+		wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, red, 0), wmfRec(MetaSelectObject, 1), wmfPoly(MetaPolygon, wsquare(2, 18)...),
+		wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 2), wmfPoly(MetaPolygon, wsquare(21, 38)...))
+	// The whole of the EMF is its 41 x 21 pixel image, as GDI+ records it.
+	emfSrc, wmfSrc := [4]float64{0, 0, 41, 21}, [4]float64{0, 0, 40, 20}
+	emfDest := [4]float64{4, 4, 80, 40}
+	if part {
+		emfSrc, wmfSrc, emfDest = [4]float64{10, 0, 30, 20}, [4]float64{10, 0, 30, 20}, [4]float64{4, 4, 60, 40}
+	}
+	return plusScene96(
+		plusRec(PlusSetPixelOffsetModeRecord, 4),
+		plusObj(1, 5, metafileImageObj(3, emf)),
+		plusObj(2, 5, metafileImageObj(2, wmf)),
+		drawImage(1, emfSrc, emfDest),
+		drawImage(2, wmfSrc, [4]float64{50, 44, 40, 16}),
 	)
 }
 

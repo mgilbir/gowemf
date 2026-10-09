@@ -150,9 +150,10 @@ Path type flags, starting points, complete Bezier triples, figure closures and
 RLE Bezier indicators are validated before exposing a path, including nested cap
 paths. PathPointFlags bits other than R and C have no defined meaning
 (MS-EMFPLUS 2.2.1.6); writers set 0x2000, so those bits are kept in
-`PlusPath.Flags` but ignored. Dash/marker flags remain available to the renderer. Embedded metafiles are
-not automatically recursed into. The consumer must impose a nesting/aggregate
-resource budget before recursive playback.
+`PlusPath.Flags` but ignored. Dash/marker flags remain available to the renderer.
+`Decode` and `Stream` do not recurse into embedded metafiles; `Play` draws
+metafile images under a nesting and aggregate record budget (see EMF+
+playback).
 
 Driver strings distinguish glyph indexes from Unicode code units and retain
 explicit positions and optional transforms. For RealizedAdvance, the decoder
@@ -341,7 +342,7 @@ played by the GDI player, with its own device context.
 | Brushes | Solid colors with alpha, hatch styles 0–5, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, brush transform, clamped) | Hatch styles 6–52, metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors, preset colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
 | Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (an unverified interpretation; see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel or round joins, dashes, open-figure caps or corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
-| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw), with whole-pixel or fractional source subrectangles inside the bitmap or clamped to transparent | Metafile images, image effects, sources outside the bitmap without transparent clamping, alpha images under SourceCopy |
+| Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw) and of EMF, EMF+ and placeable WMF metafile images, with whole-pixel or fractional source subrectangles inside the image or clamped to transparent | Metafile images without placeable bounds, nested deeper than `MaxMetafileDepth` or under SourceCopy; image effects, sources outside the image whose image attributes tile or clamp to a visible color, alpha images under SourceCopy |
 | Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
 
 Interpretations where MS-EMFPLUS leaves room:
@@ -415,6 +416,22 @@ Interpretations where MS-EMFPLUS leaves room:
   map exactly onto the destination. A fractional source is drawn from the
   pixels enclosing it, clipped to the image of the exact rectangle (see
   `ImageDraw`), so partial source pixels are cut at the destination's edge.
+- A metafile image (MS-EMFPLUS 2.2.2.27) is played from its own default
+  state into image pixels, which MS-EMFPLUS leaves undefined. As GDI+
+  records and draws them: the logical units of placeable WMF bounds, or for
+  an EMF the frame in reference-device pixels plus one, the frame filling an
+  image one pixel wider and taller. The source rectangle maps onto the
+  destination like a bitmap's, and only its part of the picture is drawn, as
+  a final clip layer. Without image attributes, GDI+ draws nothing where a
+  source rectangle extends past a bitmap or metafile image, as with
+  transparent clamping. The embedded picture shares the Play call's pixel and
+  region budgets; its records, framed and played, count against
+  `MaxEmbeddedRecords` every time it is drawn, and its nesting against
+  `MaxMetafileDepth`. Its omissions are reported against the drawing record,
+  prefixed "embedded metafile: ". An embedded file that cannot be read is
+  reported and skipped, as GDI+ would not draw it; exceeded limits still stop
+  Play. LibreOffice agrees (`plus-metafile-image.emf`), apart from ignoring
+  partial source rectangles (`lo-plus-metafile-source.emf`).
 - SourceCopy compositing replaces pixels. That equals source-over for opaque
   paint, which is drawn; translucent paint is reported. Clear requires an
   opaque color for the same reason.

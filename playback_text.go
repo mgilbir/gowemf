@@ -290,7 +290,7 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	if len(v.Bytes) == 0 {
 		return nil
 	}
-	tb, ok := p.backend.(TextBackend)
+	tb, ok := backendAs[TextBackend](p.backend)
 	if !ok {
 		return p.unsupported(r, "text output")
 	}

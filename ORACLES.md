@@ -289,7 +289,7 @@ and a mask kept across another transfer.
 
 ### EMF+ playback scenes
 
-Eight EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
+Nine EMF+ Only agreement scenes at 96 DPI match LibreOffice under the same
 tolerance:
 - `plus-shapes.emf`: rectangles, an ellipse, a clockwise pie, an
   alternate-filled path, a polygon, a wide line and a translucent fill.
@@ -302,6 +302,9 @@ tolerance:
 - `plus-pens.emf`: wide pens, round caps, a clockwise arc and an open spline.
 - `plus-image.emf`: a PNG-encoded bitmap placed in a rectangle and on a
   parallelogram.
+- `plus-metafile-image.emf`: an embedded EMF scaled into a rectangle and a
+  placeable WMF, drawn whole as metafile images. Without the embedded pictures'
+  mapping, 2,559 pixels are unmatched.
 - `plus-image-fraction.emf`: source rectangles with half-pixel edges, scaled
   3 times into a rectangle and onto points. Drawing the enclosing whole
   pixels without the exact clip leaves 216 unmatched pixels.
@@ -317,6 +320,7 @@ within the tolerance and away from the canvas border.
 | `lo-plus-texture.emf` | Texture brushes paint nothing | Image tiled through the brush transform |
 | `lo-plus-gradients.emf` | Linear gradients drawn in about eleven discrete bands | Continuous interpolation |
 | `lo-plus-nearest.emf` | NearestNeighbor interpolation ignored; images smoothed | Nearest-neighbor hint passed to the backend |
+| `lo-plus-metafile-source.emf` | A metafile image's source rectangle is ignored; the whole picture is drawn | Only the source rectangle, mapped onto the destination |
 
 LibreOffice agrees with playback for page units, containers, Save/Restore, all
 combine modes exercised, region trees, path clips, the clockwise angle

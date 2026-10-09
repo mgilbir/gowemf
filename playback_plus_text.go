@@ -53,7 +53,7 @@ func (p *player) plusFontRequest(r Record, f PlusFont) (FontRequest, error) {
 // of "applied to each value in the text array" agrees on.
 func (p *player) plusDriverString(c Command, v PlusDriverString) error {
 	r := c.Source
-	tb, ok := p.backend.(TextBackend)
+	tb, ok := backendAs[TextBackend](p.backend)
 	switch {
 	case !ok:
 		return p.unsupported(r, "text output")

@@ -321,8 +321,8 @@ func (p *player) dilatedComplement(r Record, rects []Rect, w, h float64) ([]Rect
 		if t == b {
 			continue
 		}
-		p.regionWork += uint64(len(rects))
-		if p.regionWork > regionWorkLimit {
+		p.budget.regionWork += uint64(len(rects))
+		if p.budget.regionWork > regionWorkLimit {
 			return nil, failure(r.Offset, "region frame work", ErrLimit)
 		}
 		var spans []span
@@ -375,7 +375,7 @@ type GradientBackend interface {
 
 func (p *player) gradient(c Command, v Gradient) error {
 	r := c.Source
-	gb, ok := p.backend.(GradientBackend)
+	gb, ok := backendAs[GradientBackend](p.backend)
 	if !ok {
 		return p.unsupported(r, "gradient fill")
 	}

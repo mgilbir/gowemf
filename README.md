@@ -123,7 +123,8 @@ bitmap images. EMF+ driver strings go to a `TextBackend` like GDI text.
 Path gradient fills, symmetric compound pens and separate start and end caps
 are drawn where MS-EMFPLUS defines them. Custom and arrow caps are drawn only
 with `PlayOptions.CustomLineCaps`, under an interpretation not verified against
-Windows. DrawString layout and metafile images are reported as unsupported.
+Windows. Metafile images are played into their destination under nesting and
+record budgets. DrawString layout is reported as unsupported.
 
 Region painting (FillRgn, PaintRgn, FrameRgn and the WMF region records),
 monochrome pattern brushes colored by the text and background colors, logical

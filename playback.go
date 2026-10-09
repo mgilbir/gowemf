@@ -366,9 +366,10 @@ func (p *player) start(h Header) error {
 			return malformed(0, "EMF reference device size")
 		}
 		p.pixelMM = Point{float64(e.Millimeters.X) / float64(e.Device.X), float64(e.Millimeters.Y) / float64(e.Device.Y)}
-		if e.Micrometers != nil && e.Micrometers.X > 0 && e.Micrometers.Y > 0 {
-			p.pixelMM = Point{float64(e.Micrometers.X) / 1000 / float64(e.Device.X), float64(e.Micrometers.Y) / 1000 / float64(e.Device.Y)}
-		}
+		// szlMicrometers (MS-EMF 2.2.11) is not used: Windows GDI and GDI+
+		// place pictures by szlMillimeters even where szlMicrometers refines
+		// it (see ORACLES.md), and writers also store values in it that are
+		// not the device size at all.
 		// The picture frame is in .01 mm; convert it to reference-device pixels.
 		f := e.Frame
 		left, top := float64(f.Left)/100/p.pixelMM.X, float64(f.Top)/100/p.pixelMM.Y

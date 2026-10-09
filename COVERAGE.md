@@ -197,7 +197,7 @@ each GDI family:
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |
 | Clipping | IntersectClipRect, ExcludeClipRect, OffsetClipRgn, SelectClipPath and ExtSelectClipRgn with all five modes, omitted-region reset, SetMetaRgn, WMF SelectClipRegion and region SelectObject, save/restore | — |
 | Bitmaps | StretchDIBits, SetDIBitsToDevice, BitBlt, StretchBlt, MaskBlt without a mask, PlgBlt without a mask, AlphaBlend (constant and per-pixel alpha), TransparentBlt; WMF DIBBitBlt, DIBStretchBlt, StretchDIB, SetDIBToDev, PatBlt; mirroring, partial and clamped sources, scale/translate source transforms, HALFTONE hint; every other ROP3 (SRCAND, SRCPAINT, SRCINVERT, DSTINVERT, PATINVERT…) through a `RasterBackend`; SRCAND and SRCPAINT sprite pairs as masked images for other backends | Masks, Bitmap16 and device-to-device sources, partial scan-line buffers, rotated/sheared source transforms, ROP3 other than SRCCOPY, NOTSRCCOPY, PATCOPY, BLACKNESS, WHITENESS and DSTCOPY for backends without `RasterBackend`, apart from exact sprite pairs, such ROP3 with a hatch brush in TRANSPARENT mode, halftone with a color adjustment |
-| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; right-to-left reading order; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
+| Text | TextOut, ExtTextOut (A/W, WMF), PolyTextOut, SmallTextOut through a `TextBackend`: fonts and stock fonts, text color, all alignment flags, TA_UPDATECP, explicit advances (and ETO_PDY without vertical displacement), character extra, justification, escapement and orientation, opaque and clip rectangles, OPAQUE background cells, glyph indexes, UTF-16, the ten single-byte Windows code pages and symbol fonts, bidirectional text and right-to-left reading order (ETO_RTLREADING, TA_RTLREADING) | Backends without `TextBackend`; DEFAULT_CHARSET without `DefaultCharSet`; double-byte, OEM and Mac character sets; vertical (`@`) fonts; ETO_PDY vertical displacement; text in path brackets |
 | Fills | FillRgn, PaintRgn, FrameRgn; WMF FillRegion, PaintRegion, FrameRegion; EMR_GRADIENTFILL rectangle and triangle modes through a `GradientBackend` | InvertRgn and InvertRegion and flood fill, which read the destination; gradients for backends without `GradientBackend` |
 
 Interpretations where the specifications leave room or conflict:
@@ -275,6 +275,20 @@ Interpretations where the specifications leave room or conflict:
   MS-WMF 2.3.5.25 describes the field as unsigned. Symbol-charset bytes map to
   U+F000+byte, the private-use range symbol fonts' Windows cmaps use. Charsets
   map to code pages as Windows' TranslateCharsetInfo documents.
+- Text is laid out with the Unicode Bidirectional Algorithm (UAX #9, Unicode
+  18.0.0, `internal/bidi`), as GDI's language pack does for Unicode text: the
+  paragraph level is 1 under ETO_RTLREADING or TA_RTLREADING and 0
+  otherwise, every paragraph separator ends a paragraph, and the string is
+  one line. Play reorders the elements (L2) into `TextRun.Origins` and passes
+  the levels; shaping, mirroring (L4) and mark placement (L3) are the
+  backend's. A right-to-left element is placed against the pen's movement:
+  its measured advance ends at the right of the advance it is given, so
+  explicit spacing beyond it falls on its left (MS-EMF 2.2.5 lays such
+  advances "right to left"). Glyph indexes are already shaped and are only
+  laid right to left. MS-EMF 2.1.11 and MS-WMF 2.1.2.3 add that right-to-left
+  reading order SHOULD apply only with a Hebrew or Arabic font; the flag is
+  honored with every font, because the same definitions say the text MUST be
+  laid out right to left. None of this has been checked against Windows.
 - Palette entries are read as GDI PALETTEENTRY values (red, green, blue,
   flags), as MS-WMF 2.2.2.13 specifies. MS-EMF 2.2.18 draws LogPaletteEntry as
   reserved, blue, green, red, which is that structure read as a most-

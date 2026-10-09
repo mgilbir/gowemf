@@ -24,20 +24,32 @@ type FontRequest struct {
 }
 
 // TextRun is one string in text space: x runs along the baseline and y down
-// from it, in the units of Font. Text holds UTF-16 code units, or glyph
-// indexes of the selected font when Glyphs is set. Transform maps text space
-// to destination coordinates; it can rotate, scale anisotropically and, under
-// GM_ADVANCED, reflect. Origins are the baseline origins of each element in
-// text space, and Advances the spacing Play applied after each one (explicit,
-// or measured plus character and justification extra); underline and
-// strikeout span from the first origin over the sum of Advances. MeasureText
-// receives a run without Origins, Advances or Paint.
+// from it, in the units of Font. Text holds UTF-16 code units in logical
+// order, or glyph indexes of the selected font when Glyphs is set. Transform
+// maps text space to destination coordinates; it can rotate, scale
+// anisotropically and, under GM_ADVANCED, reflect. Origins are the baseline
+// origins of each element in text space, already in display order, and
+// Advances the spacing Play applied to each one (explicit, or measured plus
+// character and justification extra); underline and strikeout span from Left,
+// the origin of the element displayed first, over the sum of Advances.
+//
+// Levels, when not nil, holds each element's resolved bidirectional embedding
+// level (UAX #9 after rule L1); odd levels read right to left. Play has
+// already reordered the elements (rule L2) into Origins, placing an element
+// at an odd level so that its measured advance ends at the right end of the
+// advance it was given. A backend draws each element at its origin, shapes each maximal run of logically adjacent
+// elements of one level in that level's direction, and depicts characters
+// with the Bidi_Mirrored property mirrored at odd levels (rule L4). Levels is
+// nil when every element is at level 0. MeasureText receives a run with
+// Levels but without Origins, Advances, Left or Paint.
 type TextRun struct {
 	Font      FontRequest
 	Text      []uint16
 	Glyphs    bool
+	Levels    []uint8
 	Origins   []Point
 	Advances  []float64
+	Left      float64
 	Transform Matrix
 	Paint     Paint
 }
@@ -281,13 +293,13 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	if f.unsupportedWhy != "" {
 		return p.unsupported(r, f.unsupportedWhy)
 	}
-	if v.Options&0x80 != 0 || p.dc.textAlign&0x100 != 0 {
-		return p.unsupported(r, "right-to-left reading order")
-	}
 	text, glyphs, why := p.decodeText(v, f, wide)
 	if why != "" {
 		return p.unsupported(r, why)
 	}
+	// ETO_RTLREADING and TA_RTLREADING select right-to-left reading order
+	// (MS-EMF 2.1.11, MS-WMF 2.1.2.3).
+	levels := textLevels(text, glyphs, v.Options&0x80 != 0 || p.dc.textAlign&0x100 != 0)
 	updateCP := p.dc.textAlign&1 != 0
 	ref := v.Reference
 	if updateCP {
@@ -297,7 +309,7 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	if err != nil {
 		return err
 	}
-	run := TextRun{Font: f.request, Text: text, Glyphs: glyphs, Transform: ts.toDest}
+	run := TextRun{Font: f.request, Text: text, Glyphs: glyphs, Levels: levels, Transform: ts.toDest}
 	run.Font.Height *= ts.scale.Y
 	run.Font.Width *= ts.scale.X
 	if advanced {
@@ -407,10 +419,18 @@ func (p *player) textString(c Command, v Text, wide bool) error {
 	run.Paint = Paint{Kind: PaintSolid, Color: col}
 	run.Advances = advances
 	run.Origins = make([]Point, len(text))
+	run.Left = x0
 	x := x0
-	for i, a := range advances {
-		run.Origins[i] = Point{x, baseline}
-		x += a
+	for _, i := range displayOrder(text, glyphs, levels) {
+		// The pen moves against the reading direction at odd levels, so a
+		// right-to-left element ends at the right of the advance it is
+		// given: spacing beyond its measured advance falls on its left.
+		o := x
+		if levels != nil && levels[i]%2 == 1 {
+			o += advances[i] - metrics.Advances[i]
+		}
+		run.Origins[i] = Point{o, baseline}
+		x += advances[i]
 	}
 	if err := tb.DrawText(run, clip); err != nil {
 		return err

@@ -392,6 +392,20 @@ underline and strikeout extents by probe, because stroke position and
 thickness are each renderer's font policy. Fourteen planted text defects were
 each caught by both the offline text tests and the LibreOffice scenes.
 
+`text-bidi.emf` draws Hebrew with digits and Latin letters at explicit
+spacing, once in right-to-left reading order and once left to right, and
+matches LibreOffice with no unmatched pixels; `text-bidi-decoration.emf`
+checks by probe that an underline spans the run's whole extent. Drawing in
+logical order leaves 902 unmatched pixels, and placing right-to-left glyphs at
+the left of their advances 454. The Unicode Bidirectional Algorithm itself
+passes all 770,241 cases of BidiTest.txt and all 91,707 of
+BidiCharacterTest.txt (Unicode 18.0.0) under make test-external; planted
+defects in rules W4, W5, N0, L1, BD16, the paragraph level and the sequence
+boundaries each failed those tests, and each also fails an offline test.
+Seven planted defects in the playback integration (reading order, reordering,
+surrogate pairs, removed characters, paragraph splitting, brackets, glyph
+placement) were each caught by the offline tests.
+
 LibreOffice 24.2.7.2 renders ETO_NO_RECT records wrongly: it appears to read
 the absent rectangle anyway and misplaces or stacks the glyphs. The agreement
 scenes therefore record a zero rectangle, as Windows writers do, and the flag

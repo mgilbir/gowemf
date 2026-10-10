@@ -19,7 +19,7 @@ import (
 // does not give; gamma correction; tiled wraps; colors of differing alpha;
 // and boundaries that are not star-shaped from the center.
 func (p *player) plusPathGradientFill(r Record, g *PlusPathGradient, fill Path, rule FillRule, m Matrix, clip Clip) error {
-	gb, ok := p.backend.(GradientBackend)
+	gb, ok := backendAs[GradientBackend](p.backend)
 	switch {
 	case g == nil:
 		return malformed(r.Offset, "EMF+ path gradient brush")

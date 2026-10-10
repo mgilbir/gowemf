@@ -35,8 +35,9 @@ type plusSaved struct {
 // plusObject is an EMF+ object slot. Bitmap images are decoded once, on
 // first use, and charged to the playback pixel budget then.
 type plusObject struct {
-	value   any
-	decoded image.Image
+	value    any
+	decoded  image.Image
+	metafile *embeddedMetafile
 }
 
 // The initial page transform is one device pixel per world unit: GDI+ writes
@@ -593,7 +594,7 @@ func (p *player) plusBitmap(r Record, obj *plusObject, img PlusImage) (image.Ima
 // decoding and any excess of the decoded size after.
 func (p *player) decodePlusBitmap(r Record, img PlusImage) (image.Image, error) {
 	if img.Type != 1 {
-		return nil, p.unsupported(r, "EMF+ metafile image")
+		return nil, p.unsupported(r, "EMF+ metafile texture")
 	}
 	declared := uint64(max(img.Width, 0)) * uint64(max(img.Height, 0))
 	if err := p.spend(r, declared); err != nil {
@@ -613,10 +614,10 @@ func (p *player) decodePlusBitmap(r Record, img PlusImage) (image.Image, error) 
 }
 
 func (p *player) spend(r Record, n uint64) error {
-	if n > p.options.MaxImagePixels-p.pixels {
+	if n > p.options.MaxImagePixels-p.budget.pixels {
 		return failure(r.Offset, "playback bitmap pixels", ErrLimit)
 	}
-	p.pixels += n
+	p.budget.pixels += n
 	return nil
 }
 
@@ -1172,16 +1173,30 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 	if err != nil {
 		return err
 	}
-	im, err := p.plusBitmap(r, obj, obj.value.(PlusImage))
-	if err != nil || im == nil {
-		return err
+	img := obj.value.(PlusImage)
+	var im image.Image
+	var meta *embeddedMetafile
+	var bounds image.Rectangle
+	var lo, hi Point // the image's extent in image pixels
+	if img.Type == 2 {
+		if meta, err = p.metafileImage(r, obj, img); err != nil || meta == nil {
+			return err
+		}
+		hi = meta.size
+	} else {
+		if im, err = p.plusBitmap(r, obj, img); err != nil || im == nil {
+			return err
+		}
+		bounds = im.Bounds()
+		lo, hi = Point{float64(bounds.Min.X), float64(bounds.Min.Y)}, Point{float64(bounds.Max.X), float64(bounds.Max.Y)}
 	}
-	bounds := im.Bounds()
-	inside := src.X >= float64(bounds.Min.X) && src.Y >= float64(bounds.Min.Y) && src.X+src.Width <= float64(bounds.Max.X) && src.Y+src.Height <= float64(bounds.Max.Y)
+	inside := src.X >= lo.X && src.Y >= lo.Y && src.X+src.Width <= hi.X && src.Y+src.Height <= hi.Y
 	if !inside {
-		// Pixels outside the bitmap come from the attributes' wrap mode;
-		// only transparent clamping matches drawing the bitmap alone.
-		clamped := false
+		// Pixels outside the image come from the attributes' wrap mode;
+		// only transparent clamping matches drawing the image alone. Without
+		// attributes, Windows GDI+ draws nothing outside the image, as with
+		// transparent clamping (ORACLES.md).
+		clamped := true
 		if v.AttributesID != 0xffffffff {
 			a, err := p.plusObjectAt(r, v.AttributesID)
 			if err != nil {
@@ -1191,7 +1206,7 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 			clamped = attrs.WrapMode == 4 && argb(attrs.ClampColor).A == 0
 		}
 		if !clamped {
-			return p.unsupported(r, "EMF+ image source outside the bitmap")
+			return p.unsupported(r, "EMF+ image source outside the image")
 		}
 	}
 	var place Matrix
@@ -1208,6 +1223,22 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 	place = place.Then(m)
 	if !place.Finite() {
 		return malformed(r.Offset, "non-finite EMF+ image placement")
+	}
+	if meta != nil {
+		if p.plus.compositing == 1 {
+			return p.unsupported(r, "EMF+ SourceCopy compositing of a metafile image")
+		}
+		// Only the source rectangle's part of the picture is drawn.
+		x0, y0 := max(src.X, 0), max(src.Y, 0)
+		x1, y1 := min(src.X+src.Width, hi.X), min(src.Y+src.Height, hi.Y)
+		if x0 >= x1 || y0 >= y1 {
+			return nil
+		}
+		area := Path{Verbs: []PathVerb{PathMoveTo, PathLineTo, PathLineTo, PathLineTo, PathClose},
+			Points: []Point{place.Apply(Point{x0, y0}), place.Apply(Point{x1, y0}), place.Apply(Point{x1, y1}), place.Apply(Point{x0, y1})}}
+		clip := p.plusCurrentClip()
+		clip = append(clip[:len(clip):len(clip)], &ClipRegion{Op: ClipReplace, Area: area, Rule: NonZero, depth: 1})
+		return p.playEmbedded(r, meta, place, clip)
 	}
 	if p.plus.compositing == 1 && !isOpaque(im) {
 		return p.unsupported(r, "EMF+ SourceCopy compositing of an image with alpha")

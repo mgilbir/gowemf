@@ -104,7 +104,7 @@ type RasterBackend interface {
 
 func (p *player) blit(b blit) error {
 	op := RasterOperation(b.rop >> 16)
-	_, hasRaster := p.backend.(RasterBackend)
+	_, hasRaster := backendAs[RasterBackend](p.backend)
 	sprite := b.kind == blitROP && !hasRaster && (op == ropSrcAnd || op == ropSrcPaint)
 	if p.sprite != nil && !(sprite && op == ropSrcPaint) {
 		if err := p.flushSprite(); err != nil {
@@ -123,7 +123,7 @@ func (p *player) blit(b blit) error {
 			return p.patBlt(b)
 		case 0xcc, 0x33:
 		default:
-			rb, ok := p.backend.(RasterBackend)
+			rb, ok := backendAs[RasterBackend](p.backend)
 			if !ok && !sprite {
 				return p.unsupported(b.r, fmt.Sprintf("raster operation 0x%02x", uint8(op)))
 			}
@@ -494,10 +494,10 @@ func (p *player) patBlt(b blit) error {
 
 func (p *player) spendPixels(r Record, w, h int) error {
 	n := uint64(w) * uint64(h)
-	if n > p.options.MaxImagePixels-p.pixels {
+	if n > p.options.MaxImagePixels-p.budget.pixels {
 		return failure(r.Offset, "playback bitmap pixels", ErrLimit)
 	}
-	p.pixels += n
+	p.budget.pixels += n
 	return nil
 }
 

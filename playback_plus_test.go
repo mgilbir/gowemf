@@ -680,11 +680,17 @@ func TestPlayEMFPlusImages(t *testing.T) {
 	if d.Source.Min.X != 1 || d.Source.Dx() != 1 || d.Source.Dy() != 2 || !pointsNear([]Point{d.Transform.Apply(Point{1, 0}), d.Transform.Apply(Point{2, 0}), d.Transform.Apply(Point{1, 2})}, Point{10, 10}, Point{20, 15}, Point{5, 30}) {
 		t.Fatalf("draw image points %+v", d)
 	}
-	// Source pixels outside the bitmap come from image attributes.
+	// Source pixels outside the bitmap come from image attributes; with
+	// none, nothing is drawn there, as in GDI+.
 	outside := plusRec(PlusDrawImageRecord, 4, dwords(0xffffffff, 2), fl(0, 0, 4, 2), fl(10, 10, 20, 40))
-	_, skipped = plusPlay(t, plusScene(96, 64, img, outside), PlayOptions{})
+	b, skipped = plusPlay(t, plusScene(96, 64, img, outside), PlayOptions{})
+	if len(skipped) != 0 || b.images[0].draw.Source.Dx() != 2 {
+		t.Fatal("no attributes", skipped)
+	}
+	tile := plusObj(7, 8, dwords(plusVersion, 0, 0, 0, 0, 0))
+	_, skipped = plusPlay(t, plusScene(96, 64, img, tile, plusRec(PlusDrawImageRecord, 4, dwords(7, 2), fl(0, 0, 4, 2), fl(10, 10, 20, 40))), PlayOptions{})
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "outside") {
-		t.Fatal(skipped)
+		t.Fatal("tiled", skipped)
 	}
 	clamp := plusObj(7, 8, dwords(plusVersion, 0, 4, 0x00ffffff, 0, 0))
 	attributed := plusRec(PlusDrawImageRecord, 4, dwords(7, 2), fl(0, 0, 4, 2), fl(10, 10, 20, 40))

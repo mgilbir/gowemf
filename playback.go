@@ -264,8 +264,14 @@ type PlayOptions struct {
 	MaxPathPoints  uint64
 	MaxImagePixels uint64
 	MaxClipSteps   uint32
-	CustomLineCaps bool
-	Unsupported    func(UnsupportedOperation) error
+	// MaxMetafileDepth bounds the nesting of EMF+ metafile images (default
+	// 4); MaxEmbeddedRecords bounds the records of embedded metafiles framed
+	// and played across the Play call (default 1,000,000), however often
+	// each is drawn.
+	MaxMetafileDepth   uint32
+	MaxEmbeddedRecords uint64
+	CustomLineCaps     bool
+	Unsupported        func(UnsupportedOperation) error
 }
 
 // errSkip marks an operation skipped with the Unsupported callback's consent.
@@ -305,7 +311,7 @@ func Play(data []byte, options PlayOptions, backend Backend) (Header, error) {
 	if err != nil {
 		return Header{}, err
 	}
-	p := &player{options: options, backend: backend}
+	p := &player{options: options, backend: backend, budget: &playBudget{}}
 	if err := p.start(h); err != nil {
 		return Header{}, err
 	}
@@ -325,9 +331,9 @@ type player struct {
 	// MM_ISOTROPIC adjustment.
 	pixelMM      Point
 	path         *pathBuilder
-	constructing bool // inside BeginPath/EndPath
-	pixels       uint64
-	regionWork   uint64
+	constructing bool        // inside BeginPath/EndPath
+	budget       *playBudget // shared with embedded metafiles
+	depth        uint32      // embedded metafile nesting
 	generations  []uint64
 	// EMF+ playback state; plusDPI is the header's logical resolution.
 	sprite      *pendingSprite // SRCAND mask awaiting its SRCPAINT
@@ -367,27 +373,11 @@ func (p *player) start(h Header) error {
 		p.objects = make([]playObject, int(h.WMF.Objects))
 	} else {
 		e := h.EMF
-		if e.Device.X <= 0 || e.Device.Y <= 0 || e.Millimeters.X <= 0 || e.Millimeters.Y <= 0 {
-			return malformed(0, "EMF reference device size")
+		pixelMM, left, top, w, ht, err := emfFrame(e)
+		if err != nil {
+			return err
 		}
-		p.pixelMM = Point{float64(e.Millimeters.X) / float64(e.Device.X), float64(e.Millimeters.Y) / float64(e.Device.Y)}
-		// szlMicrometers (MS-EMF 2.2.11) is not used: Windows GDI and GDI+
-		// place pictures by szlMillimeters even where szlMicrometers refines
-		// it (see ORACLES.md), and writers also store values in it that are
-		// not the device size at all.
-		// The picture frame is in .01 mm; convert it to reference-device pixels.
-		f := e.Frame
-		left, top := float64(f.Left)/100/p.pixelMM.X, float64(f.Top)/100/p.pixelMM.Y
-		w, ht := (float64(f.Right)-float64(f.Left))/100/p.pixelMM.X, (float64(f.Bottom)-float64(f.Top))/100/p.pixelMM.Y
-		if w <= 0 || ht <= 0 {
-			// Fall back to the inclusive device-unit bounds.
-			b := e.Bounds
-			left, top = float64(b.Left), float64(b.Top)
-			w, ht = float64(b.Right)-float64(b.Left)+1, float64(b.Bottom)-float64(b.Top)+1
-			if w <= 0 || ht <= 0 {
-				return malformed(8, "empty EMF picture frame")
-			}
-		}
+		p.pixelMM = pixelMM
 		sx, sy := d.Width/w, d.Height/ht
 		p.base = Matrix{M11: sx, M22: sy, Dx: d.X - left*sx, Dy: d.Y - top*sy}
 		p.objects = make([]playObject, int(e.Handles)+1)
@@ -450,4 +440,32 @@ func transferRecord(r Record) bool {
 		}
 	}
 	return false
+}
+
+// emfFrame returns the size of an EMF reference-device pixel in millimeters
+// and the picture frame in those pixels: rclFrame, or the inclusive rclBounds
+// when the frame is empty.
+func emfFrame(e *EMFHeader) (pixelMM Point, left, top, w, ht float64, err error) {
+	if e.Device.X <= 0 || e.Device.Y <= 0 || e.Millimeters.X <= 0 || e.Millimeters.Y <= 0 {
+		return pixelMM, 0, 0, 0, 0, malformed(0, "EMF reference device size")
+	}
+	pixelMM = Point{float64(e.Millimeters.X) / float64(e.Device.X), float64(e.Millimeters.Y) / float64(e.Device.Y)}
+	// szlMicrometers (MS-EMF 2.2.11) is not used: Windows GDI and GDI+
+	// place pictures by szlMillimeters even where szlMicrometers refines it
+	// (see ORACLES.md), and writers also store values in it that are not the
+	// device size at all.
+	// The picture frame is in .01 mm; convert it to reference-device pixels.
+	f := e.Frame
+	left, top = float64(f.Left)/100/pixelMM.X, float64(f.Top)/100/pixelMM.Y
+	w, ht = (float64(f.Right)-float64(f.Left))/100/pixelMM.X, (float64(f.Bottom)-float64(f.Top))/100/pixelMM.Y
+	if w <= 0 || ht <= 0 {
+		// Fall back to the inclusive device-unit bounds.
+		b := e.Bounds
+		left, top = float64(b.Left), float64(b.Top)
+		w, ht = float64(b.Right)-float64(b.Left)+1, float64(b.Bottom)-float64(b.Top)+1
+		if w <= 0 || ht <= 0 {
+			return pixelMM, 0, 0, 0, 0, malformed(8, "empty EMF picture frame")
+		}
+	}
+	return pixelMM, left, top, w, ht, nil
 }

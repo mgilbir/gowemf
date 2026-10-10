@@ -193,10 +193,12 @@ const (
 )
 
 // boxSpace is where GDI constructs bounding-rectangle shapes. Under
-// GM_COMPATIBLE that is device space: the arc direction is not reflected by
-// the transform, and bottom/right edges are excluded (MS-EMF 2.1.16). Under
-// GM_ADVANCED it is world space, where arcs follow the arc direction and the
-// edges are included.
+// GM_COMPATIBLE that is device space: the right and bottom edges are excluded
+// and the arc direction is not reflected by the transform (MS-EMF 2.1.16).
+// Under GM_ADVANCED it is world space, where the edges are included and a
+// reflection reverses the displayed arc direction. Windows constructs EMF
+// shapes as under GM_ADVANCED even with an identity world transform
+// (ORACLES.md), so only WMF uses GM_COMPATIBLE here.
 type boxSpace struct {
 	s          shape  // box space to destination
 	toBox      Matrix // logical to box space
@@ -204,16 +206,17 @@ type boxSpace struct {
 }
 
 func (p *player) boxSpace(b *pathBuilder, m Matrix) boxSpace {
-	if p.advanced() {
+	if p.format == EMF {
 		return boxSpace{shape{b, m}, Identity(), false}
 	}
-	// World is the identity, so m is the page mapping followed by base.
+	// WMF has no world transform, so m is the page mapping followed by base.
 	return boxSpace{shape{b, p.base}, p.dc.pageMatrix(), true}
 }
 
 // closedShape appends a bounding-rectangle figure and returns its end point
-// in box space. inset is the pen width for PS_INSIDEFRAME, in box units.
-func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end Point, inset float64) Point {
+// in box space. inset is the pen width along each axis for PS_INSIDEFRAME,
+// in box units.
+func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end Point, inset Point) Point {
 	s := bs.s
 	c0 := bs.toBox.Apply(Point{float64(box.Left), float64(box.Top)})
 	c1 := bs.toBox.Apply(Point{float64(box.Right), float64(box.Bottom)})
@@ -222,7 +225,7 @@ func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end
 	if bs.compatible {
 		r, b = r-1, b-1
 	}
-	l, t, r, b = l+inset/2, t+inset/2, r-inset/2, b-inset/2
+	l, t, r, b = l+inset.X/2, t+inset.Y/2, r-inset.X/2, b-inset.Y/2
 	if l > r {
 		l, r = (l+r)/2, (l+r)/2
 	}

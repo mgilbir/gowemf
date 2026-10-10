@@ -164,12 +164,19 @@ func TestCompareWindowsOutputs(t *testing.T) {
 		case name == "rec-inner.emf" || strings.HasPrefix(name, "win-inner"):
 			w, h = 40, 20
 		}
-		ours, err := playRenderOptions(scenes[name], w, h, PlayOptions{CustomLineCaps: true})
+		var skipped []string
+		ours, err := playRenderOptions(scenes[name], w, h, PlayOptions{CustomLineCaps: true, Unsupported: func(u UnsupportedOperation) error {
+			skipped = append(skipped, u.Reason)
+			return nil
+		}})
 		line := name + ":"
 		if err != nil {
 			line += " play error " + err.Error()
 		}
-		for _, kind := range []string{"gdiplus", "gdi"} {
+		if len(skipped) != 0 {
+			line += fmt.Sprintf(" skipped %q", skipped)
+		}
+		for _, kind := range []string{"gdiplus", "gdi", "gdiwmf"} {
 			f, err := os.Open(filepath.Join(root, kind, name+".png"))
 			if err != nil {
 				continue

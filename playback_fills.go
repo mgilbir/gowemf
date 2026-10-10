@@ -21,9 +21,11 @@ type paletteEntry struct {
 	flags byte
 }
 
-// paletteRef selects a logical palette. The generation detects deletion or
-// reuse of the slot after a saved state recorded the selection.
+// paletteRef selects a logical palette. Like objectRef it holds the palette
+// itself, which palette records still update through its slot; the
+// generation identifies the selection a deletion replaces.
 type paletteRef struct {
+	pal        *gdiPalette
 	slot       uint32
 	generation uint64
 	selected   bool
@@ -57,13 +59,9 @@ func (p *player) palette(slot uint32) *gdiPalette {
 }
 
 // selectedPalette returns the logical palette in the device context, or nil
-// when the default palette is selected or the selection is stale.
+// when the default palette is selected.
 func (p *player) selectedPalette() *gdiPalette {
-	s := p.dc.palette
-	if !s.selected || uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation {
-		return nil
-	}
-	return p.palette(s.slot)
+	return p.dc.palette.pal
 }
 
 func (p *player) selectPalette(id uint32) {
@@ -71,13 +69,19 @@ func (p *player) selectPalette(id uint32) {
 		p.dc.palette = paletteRef{} // DEFAULT_PALETTE
 		return
 	}
-	p.dc.palette = paletteRef{slot: id, generation: p.generations[id], selected: true}
+	if p.beyondTable(id) {
+		return
+	}
+	p.dc.palette = paletteRef{pal: p.palette(id), slot: id, generation: p.generations[id], selected: true}
 }
 
 // updatePalette applies SetPaletteEntries, ResizePalette and AnimatePalette.
 // Stream has resolved WMF updates to the selected palette and checked ranges.
 func (p *player) updatePalette(r Record, v Palette, op string) error {
 	pal := p.palette(v.Handle)
+	if pal == nil && p.beyondTable(v.Handle) {
+		return nil
+	}
 	if pal == nil {
 		return malformed(r.Offset, "palette update target")
 	}
@@ -186,6 +190,46 @@ func (m *monoPattern) image(p *player, r Record, fg, bg color.NRGBA) (*image.NRG
 
 // monoIndexPalette lets a monochrome DIB be parsed as two palette indexes.
 var monoIndexPalette = []color.NRGBA{{A: 255}, {255, 255, 255, 255}}
+
+// monoBrushPattern decodes an EMR_CREATEMONOBRUSH bitmap, whose colors the
+// DC supplies. As GDI does (ORACLES.md), a DIB_PAL_INDICES bitmap's bits are
+// used as they are, a DIB_RGB_COLORS bitmap's bits are inverted unless its
+// second color is the brighter, and a DIB_PAL_COLORS bitmap paints only the
+// text color.
+func (p *player) monoBrushPattern(r Record, g *gdiBrush) (*monoPattern, error) {
+	// The bits do not depend on the color table; only DIB_RGB_COLORS reads it.
+	usage, logical := uint32(2), monoIndexPalette
+	if g.usage == 0 {
+		usage, logical = 0, nil
+	}
+	d, err := ParseDIB(g.info, g.bits, usage, logical, p.options.Images)
+	if err == nil {
+		err = p.spendPixels(r, d.width, d.height)
+	}
+	var bits []bool
+	if err == nil {
+		bits, err = d.monoBits()
+	}
+	if err != nil {
+		return nil, p.imageError(r, err)
+	}
+	invert := g.usage == 0 && (len(d.palette) < 2 || !brighter(d.palette[1], d.palette[0]))
+	for i := range bits {
+		switch g.usage {
+		case 0:
+			bits[i] = bits[i] != invert
+		case 1:
+			bits[i] = false
+		}
+	}
+	return &monoPattern{w: d.width, h: d.height, bits: bits}, nil
+}
+
+// brighter reports whether a is brighter than b by the unweighted sum of
+// their channels, the measure GDI's monochrome conversion was seen to use.
+func brighter(a, b color.NRGBA) bool {
+	return int(a.R)+int(a.G)+int(a.B) > int(b.R)+int(b.G)+int(b.B)
+}
 
 func parseBitmap16(data []byte, limits DecodeLimits) (Bitmap16, error) {
 	c := cursor{b: data, limits: limits.defaults()}
@@ -448,6 +492,9 @@ func (p *player) brushObject(r Record, id uint32) (*gdiBrush, error) {
 			return nil, malformed(r.Offset, "stock brush reference")
 		}
 		return stockBrushes[n], nil
+	}
+	if p.beyondTable(id) {
+		return nil, nil
 	}
 	if uint64(id) >= uint64(len(p.objects)) || p.objects[id].brush == nil {
 		return nil, malformed(r.Offset, fmt.Sprintf("brush object %d", id))

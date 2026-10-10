@@ -336,19 +336,36 @@ func TestPlayResourceLimits(t *testing.T) {
 
 func TestPlayResolvesPens(t *testing.T) {
 	line := emfPoints(EMRPolyline, 0, 0, 10, 0)
-	// LogPen: geometric with round caps/joins, width scaled by the logical
-	// x-axis under GM_COMPATIBLE (MS-WMF 3.1.4.2), here x0.5 and y x2.
+	// LogPen: geometric with round caps/joins, a circle of its logical width
+	// transformed with the page mapping, here x0.5 and y x2, as Windows
+	// draws it.
 	aniso := []byte{}
 	for _, r := range [][]byte{emfValue(EMRSetMapMode, 8), emfPoint(EMRSetWindowExtEx, 2, 1), emfPoint(EMRSetViewportExtEx, 1, 2)} {
 		aniso = append(aniso, r...)
 	}
 	b := record(t, emfScene(96, 64, 4, append(emfSplit(aniso), emfPen(1, 0, 8, blue), emfSelect(1), line)...), PlayOptions{})
 	s := b.strokes[0].stroke
-	if s.Hairline || s.Width != 4 || s.Transform != Identity() || s.Cap != CapRound || s.Join != JoinRound || s.Dash != DashSolid || s.Paint.Color != cBlue {
+	if s.Hairline || s.Width != 8 || s.Transform != (Matrix{M11: .5, M22: 2}) || s.Cap != CapRound || s.Join != JoinRound || s.Dash != DashSolid || s.Paint.Color != cBlue {
 		t.Fatalf("LogPen: %+v", s)
 	}
 	if s.PixelCenter != (Point{.5, .5}) {
 		t.Fatal("pixel center", s.PixelCenter)
+	}
+	// WMF pens are transformed the same way: y x0.5 here.
+	b = record(t, wmfScene(96, 64, 1, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 100, 100), wmfRec(MetaSetViewportExt, 50, 100),
+		wmfPen(0, 10, blue), wmfRec(MetaSelectObject, 0), wmfPoly(MetaPolyline, 10, 20, 60, 20)), PlayOptions{})
+	if s := b.strokes[0].stroke; s.Width != 10 || s.Transform.M12 != 0 || s.Transform.M21 != 0 || math.Abs(s.Transform.M22/s.Transform.M11-.5) > 1e-12 {
+		t.Fatalf("WMF pen: %+v", s)
+	}
+	// A PS_INSIDEFRAME pen insets a WMF box by its width along each axis.
+	frame := func(style uint16) *recordingBackend {
+		return record(t, wmfScene(96, 64, 1, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 100, 100), wmfRec(MetaSetViewportExt, 50, 100),
+			wmfPen(style, 10, blue), wmfRec(MetaSelectObject, 0), wmfBox(MetaRectangle, 0, 0, 80, 80)), PlayOptions{})
+	}
+	inside, plain := frame(6), frame(0)
+	d := Point{inside.fills[0].path.Points[0].X - plain.fills[0].path.Points[0].X, inside.fills[0].path.Points[0].Y - plain.fills[0].path.Points[0].Y}
+	if m := plain.strokes[0].stroke.Transform; !(d.X > 0) || math.Abs(d.X/d.Y-m.M11/m.M22) > 1e-9 {
+		t.Fatalf("inside frame inset %v for pen transform %+v", d, m)
 	}
 	// ExtCreatePen style bits and a GM_ADVANCED world transform.
 	world := emfWorld(Matrix{M11: 2, M22: 3})
@@ -364,13 +381,13 @@ func TestPlayResolvesPens(t *testing.T) {
 			t.Fatal("hairline", b.strokes[0].stroke)
 		}
 	}
-	// A user style copies its dashes before scaling them, keeps them in pen
-	// units, and receives the opaque background color for gaps.
+	// A user style copies its dashes, keeps them in pen units, and receives
+	// the opaque background color for gaps.
 	user := emfRecord(EMRExtCreatePen, longs(1, 0, 0, 0, 0, 0x10000|7, 4, 0, red, 0, 2, 3, 5))
 	b = record(t, emfScene(96, 64, 4, append(emfSplit(aniso), user, emfSelect(1), emfValue(EMRSetBkColor, green), line, line)...), PlayOptions{})
 	for _, op := range b.strokes {
 		s := op.stroke
-		if s.Dash != DashUser || len(s.Dashes) != 2 || s.Dashes[0] != 1.5 || s.Dashes[1] != 2.5 || s.Gap == nil || s.Gap.Color != cGreen {
+		if s.Dash != DashUser || len(s.Dashes) != 2 || s.Dashes[0] != 3 || s.Dashes[1] != 5 || s.Gap == nil || s.Gap.Color != cGreen {
 			t.Fatalf("user style: %+v", s)
 		}
 	}
@@ -378,9 +395,9 @@ func TestPlayResolvesPens(t *testing.T) {
 	if s := b.strokes[0].stroke; s.Dash != DashDot || s.Gap != nil {
 		t.Fatalf("transparent dotted pen: %+v", s)
 	}
-	// EMF reference pixels scale with the destination.
+	// EMF reference pixels and pens scale with the destination.
 	b = record(t, emfScene(96, 64, 4, emfPen(1, 0, 3, red), emfSelect(1), line), PlayOptions{Destination: Box{Width: 192, Height: 32}})
-	if s := b.strokes[0].stroke; s.PixelCenter != (Point{1, .25}) || s.Width != 6 {
+	if s := b.strokes[0].stroke; s.PixelCenter != (Point{1, .25}) || s.Width != 3 || s.Transform != (Matrix{M11: 2, M22: .5}) {
 		t.Fatalf("scaled destination: %+v", s)
 	}
 }
@@ -459,29 +476,63 @@ func TestPlayBuildsPaths(t *testing.T) {
 	if strings.ContainsAny(verbs(b.strokes[0].path), "C") || !strings.HasSuffix(verbs(b.strokes[0].path), "Z") {
 		t.Fatal("flattened ellipse", verbs(b.strokes[0].path))
 	}
-	// Rectangles follow the arc direction; under GM_COMPATIBLE the right and
-	// bottom device edges are excluded (MS-EMF 2.1.16).
-	for dir, want := range map[int32][]Point{1: {{0, 0}, {0, 9}, {9, 9}, {9, 0}}, 2: {{0, 0}, {9, 0}, {9, 9}, {0, 9}}} {
-		b = record(t, emfScene(96, 64, 4, emfValue(EMRSetArcDirection, dir), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
-		for i, q := range want {
-			if !near(b.fills[0].path.Points[i], q) {
-				t.Fatal("rectangle direction", dir, b.fills[0].path.Points)
-			}
+	// A reflecting page mapping reverses the displayed direction of EMF arcs,
+	// chords, pies and ArcTo, which apply the arc direction in logical space;
+	// WMF arcs keep it in device space (ORACLES.md).
+	lometric := [][]byte{emfValue(EMRSetMapMode, 2), emfPoint(EMRSetViewportOrgEx, 0, 64)}
+	wmfFlip := []Record{wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96), wmfRec(MetaSetViewportOrg, 64, 0), wmfRec(MetaSetViewportExt, -64, 96)}
+	below := func(p Path) bool { // the figure lies below its first point
+		var max float64
+		for _, q := range p.Points {
+			max = math.Max(max, q.Y-p.Points[0].Y)
+		}
+		return max > 1
+	}
+	for _, c := range []struct {
+		name  string
+		data  []byte
+		below bool
+	}{
+		{"EMF chord", emfScene(96, 64, 4, append(lometric, emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50))...), true},
+		{"EMF clockwise pie", emfScene(96, 64, 4, append(lometric, emfValue(EMRSetArcDirection, 2), emfArc(EMRPie, 10, 10, 170, 90, 170, 50, 10, 50))...), false},
+		{"EMF x reflection", emfScene(96, 64, 4, emfValue(EMRSetMapMode, 8), emfPoint(EMRSetWindowExtEx, 192, 128), emfPoint(EMRSetViewportExtEx, -96, 64), emfPoint(EMRSetViewportOrgEx, 96, 0), emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50)), false},
+		{"EMF both axes", emfScene(96, 64, 4, emfValue(EMRSetMapMode, 8), emfPoint(EMRSetWindowExtEx, 192, 128), emfPoint(EMRSetViewportExtEx, -96, -64), emfPoint(EMRSetViewportOrgEx, 96, 64), emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50)), true},
+		{"WMF chord", wmfScene(96, 64, 2, append(wmfFlip, wmfRec(MetaChord, 32, 10, 32, 90, 60, 90, 4, 10))...), false},
+	} {
+		b = record(t, c.data, PlayOptions{})
+		if len(b.fills) != 1 || below(b.fills[0].path) != c.below {
+			t.Fatal(c.name, b.fills)
 		}
 	}
-	// GM_ADVANCED includes the edges.
+	b = record(t, emfScene(96, 64, 4, append(lometric, emfPoint(EMRMoveToEx, 10, 50), emfArc(EMRArcTo, 10, 10, 170, 90, 170, 50, 10, 50), emfPoint(EMRLineTo, 90, 10))...), PlayOptions{})
+	if arc := b.strokes[0].path.Points; len(b.strokes) != 2 || !below(Path{Points: arc[1:]}) || !near(b.strokes[1].path.Points[0], arc[len(arc)-1]) {
+		t.Fatal("EMF ArcTo", b.strokes)
+	}
+	// Rectangles follow the arc direction. EMF shapes include the right and
+	// bottom edges, as under GM_ADVANCED; WMF shapes, under GM_COMPATIBLE,
+	// exclude them in device space (MS-EMF 2.1.16).
+	for dir, want := range map[int32][]Point{1: {{0, 0}, {0, 10}, {10, 10}, {10, 0}}, 2: {{0, 0}, {10, 0}, {10, 10}, {0, 10}}} {
+		b = record(t, emfScene(96, 64, 4, emfValue(EMRSetArcDirection, dir), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
+		if !pointsNear(b.fills[0].path.Points[:4], want...) {
+			t.Fatal("rectangle direction", dir, b.fills[0].path.Points)
+		}
+	}
 	b = record(t, emfScene(96, 64, 4, emfWorld(Matrix{M11: 1, M22: 1, Dx: 1}), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
 	if !near(b.fills[0].path.Points[2], Point{11, 10}) {
-		t.Fatal("advanced rectangle", b.fills[0].path.Points)
+		t.Fatal("world rectangle", b.fills[0].path.Points)
 	}
-	// PS_INSIDEFRAME shrinks the box by the device pen width.
+	b = record(t, wmfScene(96, 64, 2, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96), wmfBox(MetaRectangle, 0, 0, 10, 10)), PlayOptions{})
+	if !pointsNear(b.fills[0].path.Points[:4], Point{0, 0}, Point{0, 9}, Point{9, 9}, Point{9, 0}) {
+		t.Fatal("WMF rectangle", b.fills[0].path.Points)
+	}
+	// PS_INSIDEFRAME shrinks the box by the pen width.
 	b = record(t, emfScene(96, 64, 4, emfPen(1, 6, 4, red), emfSelect(1), emfBox(EMRRectangle, 0, 0, 21, 21)), PlayOptions{})
-	if !near(b.fills[0].path.Points[0], Point{2, 2}) || !near(b.fills[0].path.Points[2], Point{18, 18}) {
+	if !near(b.fills[0].path.Points[0], Point{2, 2}) || !near(b.fills[0].path.Points[2], Point{19, 19}) {
 		t.Fatal("inside frame", b.fills[0].path.Points)
 	}
 	// A path survives transform changes after it is recorded, and an aborted
 	// path draws nothing.
-	b = record(t, emfScene(96, 64, 4, emfEmpty(EMRBeginPath), emfBox(EMRRectangle, 0, 0, 11, 11), emfEmpty(EMREndPath), emfWorld(Matrix{M11: 3, M22: 3}), emfBox(EMRFillPath, 0, 0, 0, 0), emfEmpty(EMRBeginPath), emfBox(EMRRectangle, 0, 0, 5, 5), emfEmpty(EMRAbortPath)), PlayOptions{})
+	b = record(t, emfScene(96, 64, 4, emfEmpty(EMRBeginPath), emfBox(EMRRectangle, 0, 0, 10, 10), emfEmpty(EMREndPath), emfWorld(Matrix{M11: 3, M22: 3}), emfBox(EMRFillPath, 0, 0, 0, 0), emfEmpty(EMRBeginPath), emfBox(EMRRectangle, 0, 0, 5, 5), emfEmpty(EMRAbortPath)), PlayOptions{})
 	if len(b.fills) != 1 || !near(b.fills[0].path.Points[2], Point{10, 10}) {
 		t.Fatal("path bracket", b.fills)
 	}
@@ -516,10 +567,12 @@ func TestPlayPlacesBitmaps(t *testing.T) {
 		t.Fatal("PlgBlt", m)
 	}
 	// Source rectangles extending beyond the bitmap are clipped to it, and a
-	// HALFTONE stretch mode requests smoothing.
+	// HALFTONE stretch mode requests smoothing. StretchDIBits sources have a
+	// lower-left origin: rows 4 to 14 from the bottom of 8 are image rows -6
+	// to 4, of which 0 to 4 exist and land 12 units down.
 	b = record(t, emfScene(96, 64, 1, emfValue(EMRSetStretchBltMode, 4), emfStretchDIBits(0, 0, 40, 20, 8, 4, 20, 10, 0x00cc0020, info, bits)), PlayOptions{})
 	d := b.images[0].draw
-	if d.Source != image.Rect(8, 4, 16, 8) || !d.Smooth || !near(d.Transform.Apply(Point{8, 4}), Point{0, 0}) {
+	if d.Source != image.Rect(8, 0, 16, 4) || !d.Smooth || !near(d.Transform.Apply(Point{8, 0}), Point{0, 12}) {
 		t.Fatal("clamped source", d.Source, d.Transform)
 	}
 	// SRCCOPY ignores DIB alpha; NOTSRCCOPY inverts; TransparentBlt keys.
@@ -533,6 +586,26 @@ func TestPlayPlacesBitmaps(t *testing.T) {
 	}
 	if c := color.NRGBAModel.Convert(img.At(12, 2)).(color.NRGBA); c != qGreen {
 		t.Fatal("unkeyed pixel", c)
+	}
+	// The lower-left origin counts from the bottom row in either row order;
+	// StretchBlt and WMF DIBStretchBlt keep an upper-left origin.
+	topInfo, topBits := sceneDIB(16, 8, true, quadrants)
+	packed := cat(info, bits)
+	for _, c := range []struct {
+		name string
+		data []byte
+		want image.Rectangle
+	}{
+		{"bottom-up StretchDIBits", emfScene(96, 64, 1, emfStretchDIBits(0, 0, 16, 4, 0, 1, 16, 3, 0x00cc0020, info, bits)), image.Rect(0, 4, 16, 7)},
+		{"top-down StretchDIBits", emfScene(96, 64, 1, emfStretchDIBits(0, 0, 16, 4, 0, 1, 16, 3, 0x00cc0020, topInfo, topBits)), image.Rect(0, 4, 16, 7)},
+		{"StretchBlt", emfScene(96, 64, 1, emfBlt(EMRStretchBlt, 0, 0, 16, 4, 0x00cc0020, 0, 1, 16, 3, info, bits)), image.Rect(0, 1, 16, 4)},
+		{"WMF StretchDIB", wmfScene(96, 64, 1, testRecord(WMF, MetaStretchDIB, 0, cat(longs(0x00cc0020), words(0, 3, 16, 1, 0, 4, 16, 0, 0), packed))), image.Rect(0, 4, 16, 7)},
+		{"WMF DIBStretchBlt", wmfScene(96, 64, 1, testRecord(WMF, MetaDIBStretchBlt, 0, cat(longs(0x00cc0020), words(3, 16, 1, 0, 4, 16, 0, 0), packed))), image.Rect(0, 1, 16, 4)},
+	} {
+		b = record(t, c.data, PlayOptions{})
+		if len(b.images) != 1 || b.images[0].draw.Source != c.want {
+			t.Fatal(c.name, b.images)
+		}
 	}
 	// SetDIBitsToDevice copies 1:1 device pixels from a lower-left origin.
 	b = record(t, emfScene(96, 64, 1, emfValue(EMRSetMapMode, 8), emfPoint(EMRSetViewportExtEx, 4, 4), emfSetDIBitsToDevice(2, 3, 8, 0, 8, 4, 8, info, bits)), PlayOptions{})
@@ -582,11 +655,11 @@ func TestPlayIsotropicAndFixedMapping(t *testing.T) {
 	// MM_ANISOTROPIC from a fixed mode retains the fixed extents.
 	box := emfBox(EMRRectangle, 0, 0, 100, -100)
 	b := record(t, emfScene(96, 64, 1, emfSelect(nullPen), emfValue(EMRSetMapMode, 7), emfPoint(EMRSetWindowExtEx, 100, 100), emfPoint(EMRSetViewportExtEx, 50, -20), box), PlayOptions{})
-	if !near(b.fills[0].path.Points[2], Point{19, 19}) {
+	if !pointsNear(b.fills[0].path.Points[:4], Point{0, 20}, Point{0, 0}, Point{20, 0}, Point{20, 20}) {
 		t.Fatal("isotropic", b.fills[0].path.Points)
 	}
 	b = record(t, emfScene(96, 64, 1, emfSelect(nullPen), emfValue(EMRSetMapMode, 3), emfValue(EMRSetMapMode, 8), emfBox(EMRRectangle, 0, 0, 2500, -2500)), PlayOptions{})
-	if !near(b.fills[0].path.Points[2], Point{99, 99}) {
+	if !pointsNear(b.fills[0].path.Points[:4], Point{0, 100}, Point{0, 0}, Point{100, 0}, Point{100, 100}) {
 		t.Fatal("HIMETRIC extents", b.fills[0].path.Points)
 	}
 }
@@ -661,9 +734,8 @@ func TestPlayEMFMicrometers(t *testing.T) {
 		}
 		return b
 	}
-	// Under GM_COMPATIBLE the rectangle ends one device pixel short.
-	right := func(mmX float64) float64 { return 49 * 100 / (26.46 / (mmX / 794)) }
-	bottom := func(mmY float64) float64 { return 49 * 100 / (26.46 / (mmY / 1123)) }
+	right := func(mmX float64) float64 { return 50 * 100 / (26.46 / (mmX / 794)) }
+	bottom := func(mmY float64) float64 { return 50 * 100 / (26.46 / (mmY / 1123)) }
 	for _, c := range []struct {
 		um       *Size
 		mmX, mmY float64 // the size used

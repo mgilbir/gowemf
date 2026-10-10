@@ -167,8 +167,9 @@ meaningful position. This bounded interpretation is documented in ORACLES.md.
 ranges, save/restore references and path-bracket construction/consumption. It
 assigns WMF's lowest available object slot using a min-heap, checks EMF handle
 bounds/stock-object indexes, and validates EMF+ reference types and configured
-slot bounds. WMF palette selection is saved/restored with generation checks so
-deleted/reused object slots cannot silently change the restored selection. Save/restore
+slot bounds. `Stream` saves and restores the WMF palette selection with
+generation checks, so its palette records cannot silently target the object
+that reused a deleted slot. Save/restore
 checks do not substitute for a renderer actually saving its complete context.
 
 Native EMF+ selection includes GDI commands only in GetDC intervals. An explicit
@@ -204,21 +205,33 @@ each GDI family:
 Interpretations where the specifications leave room or conflict:
 
 - EMF records no graphics mode. A non-identity world transform implies
-  GM_ADVANCED, because GDI records world transforms only in that mode; otherwise
-  GM_COMPATIBLE applies. Under GM_COMPATIBLE, bounding-rectangle shapes are built
-  in device space with the right and bottom edges excluded and the arc direction
-  unreflected (MS-EMF 2.1.16); under GM_ADVANCED they are built in world space
-  with edges included. WMF is always GM_COMPATIBLE.
-- LogPen widths are logical units scaled by the logical x-axis (MS-WMF 3.1.4.2)
-  and are round in device space under GM_COMPATIBLE; geometric pens follow the
-  full world transform under GM_ADVANCED. MS-EMF 2.2.19's statement that
-  non-geometric LogPen widths are device units conflicts with its own MUST that
-  they be 1, and with the GDI call EMR_CREATEPEN records. A zero width is a
-  hairline, as are cosmetic extended pens.
+  GM_ADVANCED, because GDI records world transforms only in that mode;
+  otherwise GM_COMPATIBLE applies. WMF is always GM_COMPATIBLE. MS-EMF 2.1.16
+  builds GM_COMPATIBLE bounding-rectangle shapes in device space with the
+  right and bottom edges excluded and the arc direction unreflected, and
+  GM_ADVANCED shapes in world space with the edges included. Windows' EMF
+  playback builds every EMF shape the GM_ADVANCED way, so a page mapping
+  that reflects one axis reverses the displayed arc direction; WMF playback
+  keeps the GM_COMPATIBLE rules. Play follows Windows (ORACLES.md).
+- LogPen and geometric extended pen widths are logical units. A pen is a
+  circle of that width transformed with the world and page mapping, so an
+  anisotropic mapping draws it as an ellipse in EMF and WMF alike, as
+  Windows does (ORACLES.md); MS-WMF 3.1.4.2's width scaled by the logical
+  x-axis agrees whenever both axes scale equally. MS-EMF 2.2.19's statement
+  that non-geometric LogPen widths are device units conflicts with its own
+  MUST that they be 1, and with the GDI call EMR_CREATEPEN records. A zero
+  width is a hairline, as are cosmetic extended pens.
 - Deleting a selected object activates the default stock object (MS-EMF
   3.1.1.1). The same rule applies to WMF, whose specification releases the
-  object's resources on deletion. A restored selection whose slot was deleted
-  or reused also falls back to the default instead of selecting another object.
+  object's resources on deletion. A selection held by a saved state, logical
+  palettes included, keeps its object when the handle is deleted or reused,
+  and RestoreDC reselects it, as Windows does (ORACLES.md).
+- MS-EMF 3.1.1.1 sizes the object table for Handles+1 entries, index zero
+  reserved, so `Stream` accepts an object index equal to Handles. Windows
+  counts index zero among the Handles and fails to create an object there;
+  Play likewise creates nothing there and lets selections, palette
+  updates and region fills that use the index do nothing, keeping the
+  previous selection (ORACLES.md).
 - MM_ISOTROPIC adjusts the stored viewport extent whenever an extent changes,
   keeping the smaller physical scale (MS-WMF 2.1.1.16). Switching to a scalable
   mode retains the current extents; zero extents and invalid modes are ignored,
@@ -237,10 +250,13 @@ Interpretations where the specifications leave room or conflict:
 - ExtSelectClipRgn regions are logical units, as MS-EMF 2.3.2.2 specifies. The
   "no effect" rule for bitmap records whose Bounds miss the clip is not applied;
   the drawing itself is clipped.
-- StretchDIBits sources use an upper-left origin and SetDIBitsToDevice a
-  lower-left origin, per MS-EMF 2.3.1.7 and 2.3.1.5; the WMF StretchDIB and
-  SetDIBToDev records follow the same rules. A lower-left source in a top-down
-  DIB is reported unless the source is the whole bitmap. Source rectangles are
+- SetDIBitsToDevice sources have a lower-left origin (MS-EMF 2.3.1.5).
+  MS-EMF 2.3.1.7 gives StretchDIBits sources an upper-left origin, but
+  Windows measures them from the bottom row of the image, in bottom-up and
+  top-down DIBs alike; Play follows Windows (ORACLES.md). The WMF StretchDIB
+  and SetDIBToDev records follow the same rules; StretchBlt, BitBlt and the
+  WMF DIBBitBlt and DIBStretchBlt keep an upper-left origin. A partial
+  SetDIBitsToDevice source in a top-down DIB is reported. Source rectangles are
   clamped to the bitmap and only existing pixels are drawn. A source
   transform (xformSrc) that leaves the source with fractional edges maps it
   exactly onto the destination, clipped there as for EMF+ images; GDI's own
@@ -310,8 +326,13 @@ Interpretations where the specifications leave room or conflict:
   as plain RGB on a true-color device. Palette entry allocations share the
   playback pixel budget.
 - Monochrome pattern brushes draw clear bits in the text color and set bits in
-  the background color, as GDI's CreatePatternBrush documents; the DIB's own
-  color table and Usage are ignored.
+  the background color, as GDI's CreatePatternBrush documents. For
+  EMR_CREATEMONOBRUSH, MS-EMF does not say how Usage and the color table
+  apply; Play follows GDI (ORACLES.md): DIB_PAL_INDICES bits are used as
+  they are, DIB_RGB_COLORS bits are inverted unless the second table color
+  has the larger channel sum, DIB_PAL_COLORS paints only the text color, and
+  no brush is created from a top-down DIB, so selecting its handle keeps the
+  previous brush.
 - Region data is in logical units, as for ExtSelectClipRgn; WMF scans are
   logical (MS-WMF 2.2.2.21). FrameRgn draws R minus R eroded by the brush box,
   computed exactly as R intersected with R's complement dilated by that box;

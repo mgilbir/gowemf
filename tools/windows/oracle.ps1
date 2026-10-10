@@ -11,7 +11,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'WinOracle.cs'))
-New-Item -ItemType Directory -Force -Path $Out, (Join-Path $Out 'gdiplus'), (Join-Path $Out 'gdi') | Out-Null
+New-Item -ItemType Directory -Force -Path $Out, (Join-Path $Out 'gdiplus'), (Join-Path $Out 'gdi'), (Join-Path $Out 'gdiwmf') | Out-Null
 
 $gdiplus = Get-Item (Join-Path $env:WINDIR 'System32\gdiplus.dll')
 @(
@@ -51,6 +51,11 @@ foreach ($dir in @($In) + $recorded) {
             [void][WinOracle]::RenderGdi($file, $s.w, $s.h, (Join-Path $Out "gdi\$($s.file).png"))
         } catch {
             Add-Content -Path $errors -Value "gdi $($s.file): $_"
+        }
+        try {
+            [void][WinOracle]::RenderGdiWmf($file, $s.w, $s.h, (Join-Path $Out "gdiwmf\$($s.file).png"))
+        } catch {
+            Add-Content -Path $errors -Value "gdiwmf $($s.file): $_"
         }
     }
 }

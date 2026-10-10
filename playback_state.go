@@ -31,9 +31,11 @@ func defaultDeviceContext() deviceContext {
 	}
 }
 
-// objectRef is a selection. Slot-backed references remember the generation of
-// the object they selected so deleted or reused slots fall back to the stock
-// default (MS-EMF 3.1.1.1) instead of silently changing a restored selection.
+// objectRef is a selection. It holds the object itself, as a GDI device
+// context does: a saved state keeps its selections when their handles are
+// deleted or reused, and RestoreDC brings them back (ORACLES.md). Slot-backed
+// references remember the generation of the object they selected so that
+// deleting it replaces only that object's current selection.
 type objectRef struct {
 	slot       uint32
 	generation uint64
@@ -176,8 +178,14 @@ func newBrush(r Record, v any, limits DecodeLimits) *gdiBrush {
 		return g
 	case PatternBrush:
 		if r.Type == EMRCreateMonoBrush {
+			// GDI creates no monochrome brush from a top-down DIB, so the
+			// slot stays empty and selecting it keeps the previous brush
+			// (ORACLES.md).
+			if len(b.Info) >= 12 && u32(b.Info) >= 40 && int32(u32(b.Info[8:])) < 0 {
+				return nil
+			}
 			// Monochrome brushes take text/background colors from the DC.
-			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, monoDIB: true}
+			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, usage: b.Usage, monoDIB: true}
 		}
 		return &gdiBrush{style: 5, info: b.Info, bits: b.Bits, usage: b.Usage}
 	case PackedPatternBrush:
@@ -281,30 +289,20 @@ func (p *player) restore(n int32) {
 	// Stream has already validated the level against its own saved count.
 	p.dc = p.saved[level]
 	p.saved = p.saved[:level]
-	p.revalidate()
 }
 
-// revalidate replaces selections whose object was deleted or whose slot was
-// reused with the default stock objects (MS-EMF 3.1.1.1).
-func (p *player) revalidate() {
-	live := func(r objectRef) bool {
-		return r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation
-	}
-	if !live(p.dc.pen) {
-		p.dc.pen = stockRef(stockPens[1])
-	}
-	if !live(p.dc.brush) {
-		p.dc.brush = stockRef(stockBrushes[0])
-	}
-	if !live(p.dc.font) {
-		p.dc.font = stockRef(stockFonts[systemFont])
-	}
-	if s := p.dc.palette; s.selected && (uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation) {
-		p.dc.palette = paletteRef{}
-	}
+// beyondTable reports the EMF object index equal to the header's Handles
+// count. MS-EMF 3.1.1.1 sizes the table for it, but Windows counts the
+// reserved index zero among the Handles: creating an object there fails, and
+// records that use the index do nothing (ORACLES.md).
+func (p *player) beyondTable(id uint32) bool {
+	return p.format == EMF && uint64(id)+1 == uint64(len(p.objects))
 }
 
 func (p *player) create(r Record, id uint32, body any) error {
+	if p.beyondTable(id) {
+		return nil // drawn as Windows draws it, so not reported
+	}
 	var o playObject
 	switch v := body.(type) {
 	case Pen:
@@ -363,10 +361,26 @@ func (p *player) selectObject(r Record, id uint32) error {
 	return nil
 }
 
+// deleteObject empties a slot. A current selection of the deleted object
+// falls back to the default stock object (MS-EMF 3.1.1.1); selections held by
+// saved states are kept.
 func (p *player) deleteObject(id uint32) {
+	gen := p.generations[id]
 	p.objects[id] = playObject{}
 	p.generations[id]++
-	p.revalidate()
+	deleted := func(r objectRef) bool { return !r.stock && r.slot == id && r.generation == gen }
+	if deleted(p.dc.pen) {
+		p.dc.pen = stockRef(stockPens[1])
+	}
+	if deleted(p.dc.brush) {
+		p.dc.brush = stockRef(stockBrushes[0])
+	}
+	if deleted(p.dc.font) {
+		p.dc.font = stockRef(stockFonts[systemFont])
+	}
+	if s := p.dc.palette; s.selected && s.slot == id && s.generation == gen {
+		p.dc.palette = paletteRef{}
+	}
 }
 
 // clip combines area with the current clipping region.

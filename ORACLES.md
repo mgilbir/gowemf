@@ -162,19 +162,21 @@ curved-stroke solidity, exact clip combination and the comparison metric each
 have generated tests. It centers lines on device pixels using
 `Stroke.PixelCenter`.
 
-There are eight 96x64 agreement scenes. Four EMF scenes combine the requested
+There are eleven 96x64 agreement scenes. Four EMF scenes combine the requested
 features: nested save/restore with set, left- and right-multiplied and reset
 world transforms; anisotropic mappings with each and both axes reflected, an arc
 in reflected space, MM_LOMETRIC, inherited fixed extents and a pen scaled by the
 mapping; pen/brush selection, stock objects, deleted and reused slots, geometric
 pens and restored selections; and clipped paths and bitmap transfers with
 rectangle, path and region clipping, union, difference, offset and save/restore.
-Two EMF scenes cover path brackets (alternate fill, Bézier/arc construction,
-closure, stroke-and-fill, a clockwise pie) and bitmap placement (full, mirrored,
+Two EMF scenes cover path brackets (alternate fill, Bézier construction,
+closure, stroke-and-fill) and bitmap placement (full, mirrored,
 partial-width and partial-height sources, BitBlt, NOTSRCCOPY, PATCOPY, constant
 and per-pixel alpha). Two WMF scenes cover the placeable mapping, reflected
 windows with SaveDC, lowest-free-slot reuse, geometric and hairline pens, and
-clipped DIB transfers.
+clipped DIB transfers. `arc-reflected.emf` and `.wmf` draw a counterclockwise
+chord under a reflected y axis, which EMF and WMF playback orient differently,
+and `restore-deleted.emf` restores a pen deleted while a saved state held it.
 
 Comparison is symmetric: each channel of every pixel must lie within 40/255 of
 the range spanned by the other image's 3x3 neighborhood, with at most 0.5% of
@@ -190,7 +192,7 @@ and the LibreOffice comparison before being restored: swapped world-transform
 multiplication order, an off-by-one RestoreDC level, unsigned extents, an
 uninverted fixed-mode y axis, ignored clip paths, difference treated as
 intersection, clip not saved, a stale reused object slot, ignored stock objects,
-ignored destination mirroring, a wrong partial-source origin, a lower-left
+ignored destination mirroring, a wrong partial-source origin, a wrong
 StretchDIBits origin, ignored arc direction and
 fill rule, removed compatible-mode edge exclusion, unscaled pen widths and
 ignored constant alpha. Nineteen further planted defects were caught by the
@@ -210,11 +212,12 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
 | --- | --- | --- |
 | `lo-isotropic.emf` | MM_ISOTROPIC viewport left anisotropic | Adjusted to square units (MS-WMF 2.1.1.16) |
-| `lo-compatible-arc.emf` | EMF arc direction applied in logical space under a one-axis reflection | Unreflected device-space direction (MS-EMF 2.1.16); LibreOffice's WMF import agrees with playback |
 | `lo-createpen-width.emf` | EMR_CREATEPEN width drawn as a hairline | Logical width (see COVERAGE.md) |
 | `lo-world-pen.emf` | Geometric pen not transformed by an anisotropic world transform | Pen follows the world transform under GM_ADVANCED |
 | `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
-| `lo-restore-reused.emf` | RestoreDC reselects a deleted pen by value | Default pen |
+| `lo-shape-edges.emf` | EMF RoundRect, ArcTo and a clockwise Pie built without their right and bottom edges | Edges included, as Windows' EMF playback does; LibreOffice includes them for Rectangle and Ellipse |
+| `lo-stretchdib-partial.emf`/`.wmf` | Partial StretchDIBits and StretchDIB sources measured from the top of the image | Measured from the bottom row in either row order, as Windows does |
+| `lo-pen-aniso.emf` | Pen under an anisotropic page mapping drawn round with the x-scaled width | Pen transformed with the mapping, as Windows draws it |
 | `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
 | `lo-exclude-clip.emf` | ExcludeClipRect ignored | Rectangle excluded |
 | `lo-region-copy.emf` | ExtSelectClipRgn RGN_COPY ignored | Region replaces the clip |
@@ -225,10 +228,8 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-setdibits.emf` | EMR_SETDIBITSTODEVICE draws nothing | 1:1 device pixels, lower-left source origin |
 | `lo-transparentblt.emf` | EMR_TRANSPARENTBLT draws nothing | Color-keyed transfer |
 
-LibreOffice agrees with playback for the WMF arc direction, RGN_OR and RGN_DIFF
-region clipping, OffsetClipRgn, clip paths, ExtCreatePen widths under
-anisotropic page mappings, StretchDIBits upper-left partial sources, AlphaBlend
-and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
+LibreOffice agrees with playback for RGN_OR and RGN_DIFF
+region clipping, OffsetClipRgn, clip paths, AlphaBlend and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
 device patterns differently, and the test backend does not implement them.
 Dashes are likewise left to backends and not compared.
 
@@ -456,10 +457,15 @@ Windows is the primary playback oracle. One series of runs on a GitHub
 Windows Server 2025 runner (build 26100, gdiplus.dll 10.0.26100.33438,
 gdi32.dll 10.0.26100.32995, 96 DPI) settled the interpretations below; the
 job was then removed and is not part of CI. `tools/windows/oracle.ps1`
-reproduces it by hand. It renders every generated scene with GDI
-(`PlayEnhMetaFile`) and GDI+ (`Graphics.DrawImage` of a `Metafile`), has GDI+
-itself record metafiles of the features in question, extracts the hatch
-patterns, and decodes byte sequences with `MultiByteToWideChar`.
+reproduces it by hand. It renders every generated scene with GDI and GDI+
+(`Graphics.DrawImage` of a `Metafile`). GDI draws into a 32-bit DIB section
+in a memory DC, with no GDI+ involved: EMF with `PlayEnhMetaFile`, and WMF
+both natively with `PlayMetaFile` (outputs under `gdiwmf`) and converted
+with `SetWinMetaFileBits`. The script also has GDI+ itself record metafiles
+of the features in question, extracts the hatch patterns, and decodes byte
+sequences with `MultiByteToWideChar`. A second series isolated GDI
+behaviors with throwaway generated scenes, one question per scene; their
+results are recorded under "Corrected after the comparison".
 `TestCompareWindowsOutputs`, `TestCompareWindowsDecoding` and
 `rendercheck`'s `TestCompareWindowsText` compare the downloaded outputs
 (`GOWEMF_WINDOWS_OUT`) with playback under the same neighborhood metric as
@@ -494,6 +500,68 @@ Corrected after the comparison:
   attributes GDI+ draws nothing where a source rectangle extends past a
   bitmap or metafile image (`rec-image-outside.emf`), so Play no longer
   reports that case.
+- Shape construction: GDI's EMF playback builds Rectangle, RoundRect,
+  Ellipse, Arc, Chord, Pie and ArcTo as under GM_ADVANCED even with an
+  identity world transform: in logical space with the right and bottom edges
+  included, so a page mapping that reflects one axis reverses the displayed
+  arc direction and reflecting both does not. MS-EMF 2.1.16's GM_COMPATIBLE
+  rules (device space, edges excluded, arc direction unreflected) are what
+  GDI applies to WMF, played natively with `PlayMetaFile` or converted with
+  `SetWinMetaFileBits`. GDI+ draws EMF arcs in logical space too but
+  excludes the edges. Play follows GDI. Measured pixel for pixel, null-pen
+  EMF rectangles under identity, scaled, reflected and world-transformed
+  mappings fill the same 40 x 30 pixels as GDI, 1-pixel outlines land on
+  the same columns (x 10 and 50 in EMF, 10 and 49 in WMF), and WINDING
+  paths of a polygon and a rectangle show that the rectangle reverses with
+  the mapping. Unmatched against GDI, the reflected arc, chord and pie
+  scenes drop from up to 2,152 to 0, as do `clip.emf`, `objects.emf`,
+  `lo-exclude-clip.emf`, `lo-raster-ops.emf` and a rounded rectangle; no
+  GDI scene got worse. Six-unit pens still differ by one anti-aliased
+  pixel on their outer top and left edges.
+- StretchDIBits sources: GDI measures the source y of EMR_STRETCHDIBITS and
+  WMF META_STRETCHDIB from the bottom row of the image, for bottom-up and
+  top-down DIBs, although MS-EMF 2.3.1.7 calls it the upper-left corner.
+  EMR_STRETCHBLT and WMF META_DIBSTRETCHBLT use the top row. Unmatched
+  against GDI, `bitmaps.emf` drops from 240 to 0 and the partial-source
+  experiments (both row orders, EMF, and WMF played natively and converted)
+  to 0. For SetDIBitsToDevice from a top-down DIB, GDI drew the top rows
+  for both source rows 0 and 4 of eight, which neither origin explains, so
+  Play still reports partial sources in top-down DIBs there.
+- Saved selections: a pen deleted while a saved state holds it comes back
+  with RestoreDC, in EMF whether or not its slot was reused meanwhile and in
+  WMF played natively; GDI and GDI+ draw the blue 8-unit line, not the
+  default pen (unmatched against GDI from 475 to 0, against GDI+ from 472 to
+  3). GDI restores a deleted logical palette the same way, and a
+  PALETTEINDEX brush then takes its entry; GDI+ uses the default palette. Deleting the current selection still
+  selects the default object (`lo-delete-selected.emf`/`.wmf`: 0).
+- Object table size: GDI fails to create an EMF object at the index equal
+  to the header's Handles count, and selecting the index leaves the previous
+  object selected, though MS-EMF 3.1.1.1 sizes the table for Handles+1
+  entries. Play now ignores such creations: unmatched against GDI,
+  a brush at that index drops from 960 to 0, and `mapping.emf`, whose
+  fixture selected pen 4 of 4 handles, from 192 to 3. The scene fixtures
+  that used the index (`mapping.emf`, `lo-palette-index.emf`) now declare
+  one more handle; the old `lo-palette-index.emf` matched GDI once the
+  index was ignored.
+- Monochrome brushes: GDI and GDI+ create no EMR_CREATEMONOBRUSH brush from
+  a top-down DIB, which is why they drew nothing for the earlier
+  `lo-mono-brush.emf` fixture; selecting its handle keeps the previous
+  brush. From a bottom-up DIB, DIB_PAL_INDICES bits are used as they are and
+  DIB_PAL_COLORS paints the text color alone, with or without a selected
+  palette. DIB_RGB_COLORS consults the color table: of 20 tables tried, the
+  bits are kept exactly when the second color's R+G+B exceeds the first's
+  (black/white, gray/white, green/magenta, blue 9/red 10 versus white/black,
+  equal colors, red/blue, blue 10/red 9), which rules out luminance
+  weights. All 32 monochrome scenes, including the bottom-up
+  `lo-mono-brush.emf`, now match GDI and GDI+ exactly.
+- Pen widths: GDI and GDI+ transform geometric pens, from EMR_CREATEPEN,
+  EMR_EXTCREATEPEN and WMF META_CREATEPENINDIRECT alike, with the page
+  mapping: under an anisotropic mapping a 10-unit pen draws a horizontal
+  line as thick as the y scale makes it and a vertical one as the x scale
+  does, in EMF and natively played WMF. Play no longer draws such pens
+  round with the x-scaled width: unmatched against GDI, the anisotropic pen
+  experiments drop from up to 259 to 0 (native WMF from 248 to 0) and
+  `mapping.emf` from 42 to 3; isotropic ones matched before and after.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -509,13 +577,6 @@ Corrected after the comparison:
   generated fixtures now write both as GDI+ does; the decoder still accepts
   the lenient forms. GDI+ serializes a placeable WMF image with the 24-byte
   padded header described under "Embedded placeable-WMF compatibility".
-
-Not settled by these runs: some earlier GDI scenes differ from Windows in
-ways not yet investigated. GDI and GDI+ draw nothing at all for
-`lo-mono-brush.emf`, which suggests a generated record they reject, and
-`lo-compatible-arc.emf`, `lo-palette-index.emf`, `lo-restore-reused.emf`
-and `bitmaps.emf` differ in content. They are left for a later comparison
-and are not claimed as agreement either way.
 
 ## Decoder and playback extensions
 

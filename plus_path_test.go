@@ -83,3 +83,23 @@ func pathPoints(p Points) []Point {
 	}
 	return out
 }
+
+// TestPlayContinuedObjectFinalC plays a path split over two EmfPlusObject
+// records that both set C, as writers do; the object ends at its total size.
+func TestPlayContinuedObjectFinalC(t *testing.T) {
+	path := plusPathObj([]float64{10, 10, 90, 10, 90, 90, 10, 90}, []byte{0, 1, 1, 0x81})
+	total := uint32(len(path))
+	for _, final := range []uint16{0, 0x8000} {
+		last := path[20:]
+		if final != 0 {
+			last = cat(dwords(total), last)
+		}
+		b, skipped := plusPlay(t, plusScene(96, 64,
+			plusRec(PlusObjectRecord, 0x8000|3<<8, dwords(total), path[:20]),
+			plusRec(PlusObjectRecord, final|3<<8, last),
+			plusRec(PlusFillPathRecord, 0x8000, dwords(0xff0000ff))), PlayOptions{})
+		if len(skipped) != 0 || len(b.fills) != 1 || !pointsNear(b.fills[0].path.Points[:4], Point{10.5, 10.5}, Point{90.5, 10.5}, Point{90.5, 90.5}, Point{10.5, 90.5}) {
+			t.Fatal(final, skipped, b.fills)
+		}
+	}
+}

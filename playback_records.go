@@ -802,21 +802,11 @@ func (p *player) brushPaint(r Record, g *gdiBrush, m Matrix, applyROP2 bool) (*P
 		}
 	case 3:
 		if g.monoDIB && g.mono == nil {
-			// Only the bits matter: the DC supplies both colors, so the
-			// bitmap is read as indexes whatever its Usage and color table
-			// (real writers record DIB_PAL_INDICES with no table).
-			d, err := ParseDIB(g.info, g.bits, 2, monoIndexPalette, p.options.Images)
-			if err == nil {
-				err = p.spendPixels(r, d.width, d.height)
-			}
-			var bits []bool
-			if err == nil {
-				bits, err = d.monoBits()
-			}
+			mono, err := p.monoBrushPattern(r, g)
 			if err != nil {
-				return nil, p.imageError(r, err)
+				return nil, err
 			}
-			g.mono = &monoPattern{w: d.width, h: d.height, bits: bits}
+			g.mono = mono
 		}
 		fg, err := p.color(r, p.dc.textColor)
 		if err != nil {

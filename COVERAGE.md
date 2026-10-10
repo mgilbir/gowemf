@@ -324,8 +324,13 @@ Interpretations where the specifications leave room or conflict:
   as plain RGB on a true-color device. Palette entry allocations share the
   playback pixel budget.
 - Monochrome pattern brushes draw clear bits in the text color and set bits in
-  the background color, as GDI's CreatePatternBrush documents; the DIB's own
-  color table and Usage are ignored.
+  the background color, as GDI's CreatePatternBrush documents. For
+  EMR_CREATEMONOBRUSH, MS-EMF does not say how Usage and the color table
+  apply; Play follows GDI (ORACLES.md): DIB_PAL_INDICES bits are used as
+  they are, DIB_RGB_COLORS bits are inverted unless the second table color
+  has the larger channel sum, DIB_PAL_COLORS paints only the text color, and
+  no brush is created from a top-down DIB, so selecting its handle keeps the
+  previous brush.
 - Region data is in logical units, as for ExtSelectClipRgn; WMF scans are
   logical (MS-WMF 2.2.2.21). FrameRgn draws R minus R eroded by the brush box,
   computed exactly as R intersected with R's complement dilated by that box;

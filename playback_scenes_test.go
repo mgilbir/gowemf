@@ -674,15 +674,17 @@ func emfRegionRecord(typ uint32, head []int32, rects ...Rect) []byte {
 	return emfRecord(typ, cat(longs(h...), rgn))
 }
 
-// monoDIB is a 1-bit top-down DIB of w x h whose set bits are given by on.
+// monoDIB is a 1-bit bottom-up DIB of w x h with a black and white color
+// table, whose set bits are given by on. GDI creates no monochrome brush
+// from a top-down DIB.
 func monoDIB(w, h int, on func(x, y int) bool) (info, bits []byte) {
-	info = append(dibHeader(int32(w), int32(-h), 1, 0), 0, 0, 0, 0, 255, 255, 255, 0)
+	info = append(dibHeader(int32(w), int32(h), 1, 0), 0, 0, 0, 0, 255, 255, 255, 0)
 	stride := (w + 31) / 32 * 4
 	bits = make([]byte, stride*h)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if on(x, y) {
-				bits[y*stride+x/8] |= 0x80 >> uint(x%8)
+				bits[(h-1-y)*stride+x/8] |= 0x80 >> uint(x%8)
 			}
 		}
 	}

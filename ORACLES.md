@@ -537,6 +537,17 @@ Corrected after the comparison:
   that used the index (`mapping.emf`, `lo-palette-index.emf`) now declare
   one more handle; the old `lo-palette-index.emf` matched GDI once the
   index was ignored.
+- Monochrome brushes: GDI and GDI+ create no EMR_CREATEMONOBRUSH brush from
+  a top-down DIB, which is why they drew nothing for the earlier
+  `lo-mono-brush.emf` fixture; selecting its handle keeps the previous
+  brush. From a bottom-up DIB, DIB_PAL_INDICES bits are used as they are and
+  DIB_PAL_COLORS paints the text color alone, with or without a selected
+  palette. DIB_RGB_COLORS consults the color table: of 20 tables tried, the
+  bits are kept exactly when the second color's R+G+B exceeds the first's
+  (black/white, gray/white, green/magenta, blue 9/red 10 versus white/black,
+  equal colors, red/blue, blue 10/red 9), which rules out luminance
+  weights. All 32 monochrome scenes, including the bottom-up
+  `lo-mono-brush.emf`, now match GDI and GDI+ exactly.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -552,10 +563,6 @@ Corrected after the comparison:
   generated fixtures now write both as GDI+ does; the decoder still accepts
   the lenient forms. GDI+ serializes a placeable WMF image with the 24-byte
   padded header described under "Embedded placeable-WMF compatibility".
-
-Not settled by these runs: GDI and GDI+ draw nothing at all for
-`lo-mono-brush.emf`, which suggests a generated record they reject. It is
-left for a later comparison and is not claimed as agreement either way.
 
 ## Decoder and playback extensions
 

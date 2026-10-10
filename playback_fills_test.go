@@ -132,32 +132,47 @@ func TestPlayPaletteDIBs(t *testing.T) {
 }
 
 func TestPlayMonochromeBrushes(t *testing.T) {
-	// A 2x2 checkerboard: set bits take the background color, clear bits the
-	// text color.
-	info := dibHeader(2, -2, 1, 0)
-	info = append(info, 0, 0, 0, 0, 255, 255, 255, 0)
-	bits := []byte{0x40, 0, 0, 0, 0x80, 0, 0, 0} // rows 01, 10
-	mono := emfRecord(EMRCreateMonoBrush, cat(longs(1, 0, 32, int32(len(info)), int32(32+len(info)), int32(len(bits))), info, bits))
-	b := record(t, emfScene(96, 64, 2, emfSelect(nullPen), mono, emfSelect(1), emfValue(EMRSetTextColor, red), emfValue(EMRSetBkColor, blue), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
-	p := b.fills[0].paint
-	if p.Kind != PaintPattern || p.Pattern.Bounds() != image.Rect(0, 0, 2, 2) {
-		t.Fatalf("%+v", p)
+	// A 2x2 checkerboard, rows 01 and 10, stored bottom-up: set bits take
+	// the background color and clear bits the text color, unless GDI's
+	// handling of the usage and color table says otherwise (ORACLES.md).
+	bits := []byte{0x80, 0, 0, 0, 0x40, 0, 0, 0}
+	mono := func(h int32, usage int32, table ...byte) []byte {
+		info := cat(dibHeader(2, h, 1, 0), table)
+		return emfRecord(EMRCreateMonoBrush, cat(longs(2, usage, 32, int32(len(info)), int32(32+len(info)), int32(len(bits))), info, bits))
 	}
+	bw, wb := []byte{0, 0, 0, 0, 255, 255, 255, 0}, []byte{255, 255, 255, 0, 0, 0, 0, 0}
 	for _, c := range []struct {
-		x, y int
-		want color.NRGBA
-	}{{0, 0, cRed}, {1, 0, cBlue}, {0, 1, cBlue}, {1, 1, cRed}} {
-		if got := color.NRGBAModel.Convert(p.Pattern.At(c.x, c.y)); got != c.want {
-			t.Fatalf("pattern (%d,%d) = %v, want %v", c.x, c.y, got, c.want)
+		name  string
+		brush []byte
+		want  [4]color.NRGBA // (0,0), (1,0), (0,1), (1,1)
+	}{
+		{"black and white", mono(2, 0, bw...), [4]color.NRGBA{cRed, cBlue, cBlue, cRed}},
+		{"white and black", mono(2, 0, wb...), [4]color.NRGBA{cBlue, cRed, cRed, cBlue}},
+		{"equal brightness", mono(2, 0, 0, 0, 255, 0, 255, 0, 0, 0), [4]color.NRGBA{cBlue, cRed, cRed, cBlue}},
+		{"second brighter", mono(2, 0, 0, 0, 128, 0, 255, 255, 255, 0), [4]color.NRGBA{cRed, cBlue, cBlue, cRed}},
+		// Brightness is the unweighted channel sum: magenta beats green.
+		{"green and magenta", mono(2, 0, 0, 255, 0, 0, 255, 0, 255, 0), [4]color.NRGBA{cRed, cBlue, cBlue, cRed}},
+		{"blue 10 and red 9", mono(2, 0, 10, 0, 0, 0, 0, 0, 9, 0), [4]color.NRGBA{cBlue, cRed, cRed, cBlue}},
+		// Writers record DIB_PAL_INDICES without a color table.
+		{"DIB_PAL_INDICES", mono(2, 2), [4]color.NRGBA{cRed, cBlue, cBlue, cRed}},
+		{"DIB_PAL_COLORS", mono(2, 1, 0, 0, 1, 0), [4]color.NRGBA{cRed, cRed, cRed, cRed}},
+		// GDI creates no brush from a top-down DIB: the green brush stays.
+		{"top-down", mono(-2, 0, bw...), [4]color.NRGBA{cGreen, cGreen, cGreen, cGreen}},
+	} {
+		b := record(t, emfScene(96, 64, 3, emfSelect(nullPen), emfBrush(1, 0, green), emfSelect(1), c.brush, emfSelect(2), emfValue(EMRSetTextColor, red), emfValue(EMRSetBkColor, blue), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
+		p := b.fills[0].paint
+		for k, want := range c.want {
+			got := p.Color
+			if p.Kind == PaintPattern {
+				if p.Pattern.Bounds() != image.Rect(0, 0, 2, 2) {
+					t.Fatalf("%s: %+v", c.name, p)
+				}
+				got = color.NRGBAModel.Convert(p.Pattern.At(k%2, k/2)).(color.NRGBA)
+			}
+			if got != want {
+				t.Fatalf("%s: pixel %d = %v, want %v", c.name, k, got, want)
+			}
 		}
-	}
-	// Writers record monochrome brushes as DIB_PAL_INDICES without a color
-	// table; the bits are read the same way.
-	bare := dibHeader(2, -2, 1, 0)
-	indices := emfRecord(EMRCreateMonoBrush, cat(longs(1, 2, 32, int32(len(bare)), int32(32+len(bare)), int32(len(bits))), bare, bits))
-	b = record(t, emfScene(96, 64, 2, emfSelect(nullPen), indices, emfSelect(1), emfValue(EMRSetTextColor, red), emfValue(EMRSetBkColor, blue), emfBox(EMRRectangle, 0, 0, 10, 10)), PlayOptions{})
-	if got := color.NRGBAModel.Convert(b.fills[0].paint.Pattern.At(1, 0)); got != cBlue {
-		t.Fatal("DIB_PAL_INDICES monochrome brush", got)
 	}
 	// WMF monochrome Bitmap16 patterns, from CreatePatternBrush and from
 	// DIBCreatePatternBrush with BS_PATTERN.

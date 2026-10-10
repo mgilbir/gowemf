@@ -178,8 +178,14 @@ func newBrush(r Record, v any, limits DecodeLimits) *gdiBrush {
 		return g
 	case PatternBrush:
 		if r.Type == EMRCreateMonoBrush {
+			// GDI creates no monochrome brush from a top-down DIB, so the
+			// slot stays empty and selecting it keeps the previous brush
+			// (ORACLES.md).
+			if len(b.Info) >= 12 && u32(b.Info) >= 40 && int32(u32(b.Info[8:])) < 0 {
+				return nil
+			}
 			// Monochrome brushes take text/background colors from the DC.
-			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, monoDIB: true}
+			return &gdiBrush{style: 3, info: b.Info, bits: b.Bits, usage: b.Usage, monoDIB: true}
 		}
 		return &gdiBrush{style: 5, info: b.Info, bits: b.Bits, usage: b.Usage}
 	case PackedPatternBrush:

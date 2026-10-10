@@ -458,10 +458,15 @@ Windows is the primary playback oracle. One series of runs on a GitHub
 Windows Server 2025 runner (build 26100, gdiplus.dll 10.0.26100.33438,
 gdi32.dll 10.0.26100.32995, 96 DPI) settled the interpretations below; the
 job was then removed and is not part of CI. `tools/windows/oracle.ps1`
-reproduces it by hand. It renders every generated scene with GDI
-(`PlayEnhMetaFile`) and GDI+ (`Graphics.DrawImage` of a `Metafile`), has GDI+
-itself record metafiles of the features in question, extracts the hatch
-patterns, and decodes byte sequences with `MultiByteToWideChar`.
+reproduces it by hand. It renders every generated scene with GDI and GDI+
+(`Graphics.DrawImage` of a `Metafile`). GDI draws into a 32-bit DIB section
+in a memory DC, with no GDI+ involved: EMF with `PlayEnhMetaFile`, and WMF
+both natively with `PlayMetaFile` (outputs under `gdiwmf`) and converted
+with `SetWinMetaFileBits`. The script also has GDI+ itself record metafiles
+of the features in question, extracts the hatch patterns, and decodes byte
+sequences with `MultiByteToWideChar`. A second series isolated GDI
+behaviors with throwaway generated scenes, one question per scene; their
+results are recorded under "Corrected after the comparison".
 `TestCompareWindowsOutputs`, `TestCompareWindowsDecoding` and
 `rendercheck`'s `TestCompareWindowsText` compare the downloaded outputs
 (`GOWEMF_WINDOWS_OUT`) with playback under the same neighborhood metric as
@@ -520,7 +525,9 @@ Corrected after the comparison:
   EMR_STRETCHBLT and WMF META_DIBSTRETCHBLT use the top row. Unmatched
   against GDI, `bitmaps.emf` drops from 240 to 0 and the partial-source
   experiments (both row orders, EMF, and WMF played natively and converted)
-  to 0.
+  to 0. For SetDIBitsToDevice from a top-down DIB, GDI drew the top rows
+  for both source rows 0 and 4 of eight, which neither origin explains, so
+  Play still reports partial sources in top-down DIBs there.
 - Saved selections: a pen deleted while a saved state holds it comes back
   with RestoreDC, in EMF whether or not its slot was reused meanwhile and in
   WMF played natively; GDI and GDI+ draw the blue 8-unit line, not the

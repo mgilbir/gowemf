@@ -176,7 +176,7 @@ func TestCompareWindowsOutputs(t *testing.T) {
 		if len(skipped) != 0 {
 			line += fmt.Sprintf(" skipped %q", skipped)
 		}
-		for _, kind := range []string{"gdiplus", "gdi"} {
+		for _, kind := range []string{"gdiplus", "gdi", "gdiwmf"} {
 			f, err := os.Open(filepath.Join(root, kind, name+".png"))
 			if err != nil {
 				continue

@@ -370,34 +370,168 @@ public static class WinOracle
         }
     }
 
-    // RenderGdi plays an EMF with PlayEnhMetaFile into a white bitmap; it
-    // returns false for files that are not EMF.
+    [StructLayout(LayoutKind.Sequential)]
+    struct BITMAPINFOHEADER
+    {
+        public uint Size;
+        public int Width, Height;
+        public ushort Planes, BitCount;
+        public uint Compression, SizeImage;
+        public int XPelsPerMeter, YPelsPerMeter;
+        public uint ClrUsed, ClrImportant;
+    }
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")]
+    static extern bool PatBlt(IntPtr hdc, int x, int y, int w, int h, uint rop);
+    [DllImport("gdi32.dll")]
+    static extern bool GdiFlush();
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct METAFILEPICT { public int mm, xExt, yExt; public IntPtr hMF; }
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SetWinMetaFileBits(uint size, byte[] bits, IntPtr refDC, ref METAFILEPICT mfp);
+
+    // WmfAsEmf converts a placeable WMF to an EMF with GDI's own
+    // SetWinMetaFileBits, in MM_ANISOTROPIC at the placeable bounds' size.
+    static IntPtr WmfAsEmf(string path)
+    {
+        byte[] b = File.ReadAllBytes(path);
+        if (b.Length < 22 || BitConverter.ToUInt32(b, 0) != 0x9ac6cdd7)
+        {
+            return IntPtr.Zero;
+        }
+        int w = BitConverter.ToInt16(b, 10) - BitConverter.ToInt16(b, 6);
+        int h = BitConverter.ToInt16(b, 12) - BitConverter.ToInt16(b, 8);
+        int inch = BitConverter.ToUInt16(b, 14);
+        var bits = new byte[b.Length - 22];
+        Array.Copy(b, 22, bits, 0, bits.Length);
+        var mfp = new METAFILEPICT { mm = 8, xExt = w * 2540 / inch, yExt = h * 2540 / inch };
+        return SetWinMetaFileBits((uint)bits.Length, bits, IntPtr.Zero, ref mfp);
+    }
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SetMetaFileBitsEx(uint size, byte[] bits);
+    [DllImport("gdi32.dll")]
+    static extern bool PlayMetaFile(IntPtr hdc, IntPtr hmf);
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteMetaFile(IntPtr hmf);
+    [DllImport("gdi32.dll")]
+    static extern int SetMapMode(IntPtr hdc, int mode);
+    [DllImport("gdi32.dll")]
+    static extern bool SetWindowOrgEx(IntPtr hdc, int x, int y, IntPtr old);
+    [DllImport("gdi32.dll")]
+    static extern bool SetWindowExtEx(IntPtr hdc, int x, int y, IntPtr old);
+    [DllImport("gdi32.dll")]
+    static extern bool SetViewportExtEx(IntPtr hdc, int x, int y, IntPtr old);
+
+    // RenderGdi plays an EMF, or a placeable WMF converted with
+    // SetWinMetaFileBits, with PlayEnhMetaFile into a white top-down 32-bit
+    // DIB section in a memory DC, with no GDI+ involved; it returns false for
+    // other files.
     public static bool RenderGdi(string path, int w, int h, string png)
     {
-        IntPtr hemf = GetEnhMetaFileW(path);
+        IntPtr hemf = path.EndsWith(".wmf", StringComparison.OrdinalIgnoreCase) ? WmfAsEmf(path) : GetEnhMetaFileW(path);
         if (hemf == IntPtr.Zero)
         {
             return false;
         }
         try
         {
-            using (var bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb))
+            RenderDib(w, h, png, dc =>
             {
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.Clear(Color.White);
-                    IntPtr hdc = g.GetHdc();
-                    var r = new RECT { Left = 0, Top = 0, Right = w, Bottom = h };
-                    PlayEnhMetaFile(hdc, hemf, ref r);
-                    g.ReleaseHdc(hdc);
-                }
-                bmp.Save(png, ImageFormat.Png);
-            }
+                var r = new RECT { Left = 0, Top = 0, Right = w, Bottom = h };
+                PlayEnhMetaFile(dc, hemf, ref r);
+            });
         }
         finally
         {
             DeleteEnhMetaFile(hemf);
         }
         return true;
+    }
+
+    // RenderGdiWmf plays a placeable WMF natively with PlayMetaFile, the
+    // placeable bounds mapped to the image in MM_ANISOTROPIC; it returns
+    // false for files that are not placeable WMF.
+    public static bool RenderGdiWmf(string path, int w, int h, string png)
+    {
+        byte[] b = File.ReadAllBytes(path);
+        if (b.Length < 22 || BitConverter.ToUInt32(b, 0) != 0x9ac6cdd7)
+        {
+            return false;
+        }
+        var bits = new byte[b.Length - 22];
+        Array.Copy(b, 22, bits, 0, bits.Length);
+        IntPtr hmf = SetMetaFileBitsEx((uint)bits.Length, bits);
+        if (hmf == IntPtr.Zero)
+        {
+            return false;
+        }
+        try
+        {
+            RenderDib(w, h, png, dc =>
+            {
+                SetMapMode(dc, 8);
+                SetWindowOrgEx(dc, BitConverter.ToInt16(b, 6), BitConverter.ToInt16(b, 8), IntPtr.Zero);
+                SetWindowExtEx(dc, BitConverter.ToInt16(b, 10) - BitConverter.ToInt16(b, 6), BitConverter.ToInt16(b, 12) - BitConverter.ToInt16(b, 8), IntPtr.Zero);
+                SetViewportExtEx(dc, w, h, IntPtr.Zero);
+                PlayMetaFile(dc, hmf);
+            });
+        }
+        finally
+        {
+            DeleteMetaFile(hmf);
+        }
+        return true;
+    }
+
+    // RenderDib runs play on a memory DC holding a white top-down 32-bit DIB
+    // section and saves the pixels as an opaque PNG.
+    static void RenderDib(int w, int h, string png, Action<IntPtr> play)
+    {
+        IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+        var bmi = new BITMAPINFOHEADER { Size = 40, Width = w, Height = -h, Planes = 1, BitCount = 32 };
+        IntPtr bits;
+        IntPtr dib = CreateDIBSection(dc, ref bmi, 0, out bits, IntPtr.Zero, 0);
+        IntPtr old = SelectObject(dc, dib);
+        try
+        {
+            PatBlt(dc, 0, 0, w, h, 0x00FF0062); // WHITENESS
+            play(dc);
+            GdiFlush();
+            var pixels = new byte[w * h * 4];
+            Marshal.Copy(bits, pixels, 0, pixels.Length);
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+                for (int i = 3; i < pixels.Length; i += 4)
+                {
+                    pixels[i] = 255;
+                }
+                for (int y = 0; y < h; y++)
+                {
+                    Marshal.Copy(pixels, y * w * 4, data.Scan0 + y * data.Stride, w * 4);
+                }
+                bmp.UnlockBits(data);
+                bmp.Save(png, ImageFormat.Png);
+            }
+        }
+        finally
+        {
+            SelectObject(dc, old);
+            DeleteObject(dib);
+            DeleteDC(dc);
+        }
     }
 }

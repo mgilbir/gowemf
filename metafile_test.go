@@ -49,11 +49,13 @@ func emfRecord(typ uint32, body []byte) []byte {
 	return b
 }
 
+// plusRecord pads the body: DataSize is 32-bit aligned (MS-EMFPLUS 2.3), and
+// GDI+ abandons a file at a record whose DataSize is not.
 func plusRecord(typ uint16, body []byte) []byte {
 	b := make([]byte, (12+len(body)+3)&^3)
 	put16(b, 0, typ)
 	put32(b, 4, uint32(len(b)))
-	put32(b, 8, uint32(len(body)))
+	put32(b, 8, uint32(len(b)-12))
 	copy(b[12:], body)
 	return b
 }
@@ -219,6 +221,7 @@ func TestStructure(t *testing.T) {
 
 func TestOpaqueAndPadding(t *testing.T) {
 	unknown := plusRecord(0x7fff, []byte{42})
+	put32(unknown, 8, 1)           // an unaligned DataSize is tolerated
 	unknown[len(unknown)-1] = 0xff // Padding is ignored, not required to be zero.
 	b := emfFixture(plusComment(plusHeader(), unknown, plusRecord(0x4002, nil)), emfRecord(0xffffffff, []byte{1, 2, 3, 4}))
 	seen := 0

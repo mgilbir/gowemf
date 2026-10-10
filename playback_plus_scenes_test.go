@@ -216,7 +216,9 @@ func pngQuadrants(n int, green color.NRGBA) []byte {
 	if err := png.Encode(&b, im); err != nil {
 		panic(err)
 	}
-	return cat(dwords(plusVersion, 1), longs(int32(n), int32(n), 0), dwords(0, 1), b.Bytes())
+	// MS-EMFPLUS 2.2.2.2 calls these fields undefined for compressed
+	// bitmaps, but GDI+ draws nothing unless they describe the image.
+	return cat(dwords(plusVersion, 1), longs(int32(n), int32(n), int32(4*n)), dwords(PixelFormat32bppARGB, 1), b.Bytes())
 }
 
 // A 16x16 bitmap scaled into a rectangle and sheared onto a parallelogram;

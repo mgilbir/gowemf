@@ -301,7 +301,7 @@ func TestPlayTextEncodings(t *testing.T) {
 	if b, _ := ansi(2, []byte{0x41}, PlayOptions{}); b.drawn[0].Text[0] != 0xf041 {
 		t.Fatal("symbol charset", b.drawn[0].Text)
 	}
-	for _, cs := range []byte{128, 255, 77} {
+	for _, cs := range []byte{130, 255, 77} { // JOHAB, OEM and Mac have no tables
 		if _, reasons := ansi(cs, []byte{'A'}, PlayOptions{}); len(reasons) != 1 {
 			t.Fatal("charset", cs, reasons)
 		}
@@ -448,5 +448,45 @@ func TestPlayTextBidi(t *testing.T) {
 	wb := playText(t, wmfScene(96, 64, 1, wfont, wmfRec(MetaSelectObject, 0), wmfRec(MetaSetTextAlign, 0x100), wmfTextOut(0, 0, "\xe0\xe1 1")), PlayOptions{})
 	if run := wb.drawn[0]; string(utf16.Decode(run.Text)) != "\u05d0\u05d1 1" || fmt.Sprint(run.Levels) != "[1 1 1 2]" || !same(xs(run), 25, 15, 10, 0) {
 		t.Fatalf("WMF: %q %v %v", string(utf16.Decode(run.Text)), run.Levels, xs(run))
+	}
+}
+
+// TestPlayTextDoubleByte plays text and WMF face names in the double-byte
+// character sets. An ANSI record's advances are per byte; a double-byte
+// character advances by the sum of its two.
+func TestPlayTextDoubleByte(t *testing.T) {
+	for _, c := range []struct {
+		charset    byte
+		face, text string
+		wantFace   string
+		wantText   string
+	}{
+		{136, "PMingLiU", "Hi", "PMingLiU", "Hi"},
+		{136, "PMingLiU", "\xa4\xa4\xa4\xe5", "PMingLiU", "中文"},
+		{136, "\xb7\x73\xb2\xd3\xa9\xfa\xc5\xe9", "Hi", "新細明體", "Hi"},
+		{128, "\x82\x6c\x82\x72\x20\x83\x53\x83\x56\x83\x62\x83\x4e", "Hi", "ＭＳ ゴシック", "Hi"},
+		{134, "\xcb\xce\xcc\xe5", "Hi", "宋体", "Hi"},
+		{129, "\xb1\xbc\xb8\xb2", "Hi", "굴림", "Hi"},
+	} {
+		font := testRecord(WMF, MetaCreateFontIndirect, 0, cat(words(-20, 0, 0, 0, 400), []byte{0, 0, 0, c.charset, 0, 0, 0, 0}, face32(c.face)))
+		b := playText(t, wmfScene(96, 64, 1, font, wmfRec(MetaSelectObject, 0), wmfTextOut(0, 0, c.text)), PlayOptions{})
+		if len(b.drawn) != 1 || b.drawn[0].Font.FaceName != c.wantFace || string(utf16.Decode(b.drawn[0].Text)) != c.wantText {
+			t.Errorf("charset %d: %+v", c.charset, b.drawn)
+		}
+	}
+	font := emfFont(1, -20, 0, 0, 136, "")
+	big5 := []byte{'A', 0xa4, 0xa4, 'B'}
+	b := playText(t, emfScene(96, 64, 2, font, emfSelect(1), emfText(1, 0, 0, 0, nil, "", big5, []int32{10, 7, 8, 12})), PlayOptions{})
+	if run := b.drawn[0]; string(utf16.Decode(run.Text)) != "A中B" || fmt.Sprint(run.Advances) != "[10 15 12]" || !sameOrigins(run.Origins, Point{0, 16}, Point{10, 16}, Point{25, 16}) {
+		t.Fatalf("Big5 advances: %q %v %v", string(utf16.Decode(run.Text)), run.Advances, run.Origins)
+	}
+	// ETO_PDY: pairs per byte; horizontal parts add up.
+	b = playText(t, emfScene(96, 64, 2, font, emfSelect(1), emfText(1, 0, 0, 0x2000, nil, "", big5, []int32{10, 0, 7, 0, 8, 0, 12, 0})), PlayOptions{})
+	if fmt.Sprint(b.drawn[0].Advances) != "[10 15 12]" {
+		t.Fatal("ETO_PDY advances", b.drawn[0].Advances)
+	}
+	// One advance per character, not per byte, is malformed.
+	if _, err := Play(emfScene(96, 64, 2, font, emfSelect(1), emfText(1, 0, 0, 0, nil, "", big5, []int32{10, 15, 12})), PlayOptions{Destination: Box{Width: 96, Height: 64}}, &fakeText{}); !errors.Is(err, ErrMalformed) {
+		t.Fatal("advance count", err)
 	}
 }

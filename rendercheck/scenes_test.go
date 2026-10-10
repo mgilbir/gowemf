@@ -298,6 +298,15 @@ func wmfScenes() []textScene {
 			wmfTextOut(6, 30, []byte("Caf\xe9 \x80")),
 			wmfExtTextOut(6, 70, []byte("Euro\x80"), []int16{16, 16, 16, 16, 16}),
 		)},
+		// GB2312 (code page 936) text with double-byte characters that map
+		// into Latin-1: 0xA1E3 is U+00B0 and 0xA1E8 U+00A4. Each advances by
+		// the sum of its bytes' advances (10+10), so "B" starts at 6+14+20
+		// and "C" at 6+14+20+14+20.
+		{name: "text-dbcs.wmf", data: wmfDoc(192, 96,
+			wmfFont(-24, 134), wmfRec(0x012d, le16(0)), wmfRec(0x0102, le16(1)), wmfRec(0x012e, le16(24)),
+			wmfExtTextOut(6, 50, []byte("A\xa1\xe3B\xa1\xe8C"), []int16{14, 10, 10, 14, 10, 10, 14}),
+		),
+			probes: []ink{{40, 30, 52, 50, true}, {74, 30, 86, 50, true}, {96, 20, 130, 60, false}}},
 		// With 6 extra units per character the final "e" starts after
 		// three natural advances plus 18; LibreOffice leaves it at 48.
 		{name: "lo-text-charextra.wmf", divergence: "META_SETTEXTCHAREXTRA is not applied (MS-WMF 2.3.5.25)",

@@ -392,6 +392,13 @@ underline and strikeout extents by probe, because stroke position and
 thickness are each renderer's font policy. Fourteen planted text defects were
 each caught by both the offline text tests and the LibreOffice scenes.
 
+`text-dbcs.wmf` draws GB2312 text whose double-byte characters map into
+Latin-1, with one advance per byte, and matches LibreOffice with no unmatched
+pixels; giving a double-byte character only its lead byte's advance leaves
+234. The double-byte tables are checked against every byte and lead/trail
+pair of the pinned best-fit files under make test-external, and five planted
+decoding defects were each caught by the offline tests.
+
 `text-bidi.emf` draws Hebrew with digits and Latin letters at explicit
 spacing, once in right-to-left reading order and once left to right, and
 matches LibreOffice with no unmatched pixels; `text-bidi-decoration.emf`

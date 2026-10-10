@@ -48,7 +48,7 @@ bidi: unicode-download
 	go run ./internal/bidigen
 
 test-external: corpus-download codepages-download unicode-download
-	GOWEMF_EXTERNAL=1 go test -run='TestExternalCorpus|TestCodePageTables' -count=1 -v .
+	GOWEMF_EXTERNAL=1 go test -run='TestExternalCorpus|TestCodePageTables|TestDBCSTables' -count=1 -v .
 	GOWEMF_EXTERNAL=1 go test -run='TestTables|TestBidiTest|TestBidiCharacterTest' -count=1 -v ./internal/bidi
 
 oracle-download:

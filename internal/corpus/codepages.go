@@ -6,7 +6,8 @@ package corpus
 // .external/codepages only to regenerate and verify codepage_tables.go.
 const CodePageURL = "https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/"
 
-// CodePages lists the single-byte ANSI code pages used by text playback.
+// CodePages lists the single-byte ANSI code pages used by text playback, and
+// DBCSCodePages the double-byte ones.
 var CodePages = []File{
 	{Path: "bestfit874.txt", SHA256: "663f43ca662e037c4534cb16298b560f29ce29c27b49b3589601ec3d97dd89fd", Bytes: 19653},
 	{Path: "bestfit1250.txt", SHA256: "cef9f171e67b09445bcb3f9ffccdc89418250ff825f1bd2d29a92d2074d7a53b", Bytes: 36656},
@@ -18,4 +19,11 @@ var CodePages = []File{
 	{Path: "bestfit1256.txt", SHA256: "745c447ada04a838da8bea406c13f446c7453b6371e8c6c7863a632443d56007", Bytes: 29404},
 	{Path: "bestfit1257.txt", SHA256: "b8c5d7f3b8c25c3d5625d44dd3d6ee7a06e652ddf77373d050282c1cb7517366", Bytes: 16235},
 	{Path: "bestfit1258.txt", SHA256: "5d52a9357b7d6b5b5014ed5a51be0ff9809b0c33625793d2a4feaf502e0682f1", Bytes: 22252},
+}
+
+var DBCSCodePages = []File{
+	{Path: "bestfit932.txt", SHA256: "2614cfea35c3c86c41d33198793a84ca44edee3cf0ee0013a61a43fba4ece331", Bytes: 361078},
+	{Path: "bestfit936.txt", SHA256: "e5070a2d6ad26619f5872ddbe64d3381c11620af5adbb04cda0f0abb1a91fdae", Bytes: 872372},
+	{Path: "bestfit949.txt", SHA256: "50e13b60ea8fda66a8223ecc85270e0f182303222244e2345d3d57f3e839d20a", Bytes: 1270936},
+	{Path: "bestfit950.txt", SHA256: "cf8c23389a42a226ea707f7ec32c665556d1fc3364db25bd765ce64d54eaee2a", Bytes: 705261},
 }

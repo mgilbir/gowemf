@@ -46,7 +46,7 @@ func run() error {
 		return nil
 	}
 	if *codepages {
-		for _, f := range corpus.CodePages {
+		for _, f := range append(append([]corpus.File(nil), corpus.CodePages...), corpus.DBCSCodePages...) {
 			if err := fetchURL(client, filepath.Join(".external", "codepages"), f, corpus.CodePageURL+f.Path); err != nil {
 				return fmt.Errorf("%s: %w", f.Path, err)
 			}

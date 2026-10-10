@@ -191,7 +191,7 @@ and the LibreOffice comparison before being restored: swapped world-transform
 multiplication order, an off-by-one RestoreDC level, unsigned extents, an
 uninverted fixed-mode y axis, ignored clip paths, difference treated as
 intersection, clip not saved, a stale reused object slot, ignored stock objects,
-ignored destination mirroring, a wrong partial-source origin, a lower-left
+ignored destination mirroring, a wrong partial-source origin, a wrong
 StretchDIBits origin, ignored arc direction and
 fill rule, removed compatible-mode edge exclusion, unscaled pen widths and
 ignored constant alpha. Nineteen further planted defects were caught by the
@@ -216,6 +216,7 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
 | `lo-restore-reused.emf` | RestoreDC reselects a deleted pen by value | Default pen |
 | `lo-shape-edges.emf` | EMF RoundRect, ArcTo and a clockwise Pie built without their right and bottom edges | Edges included, as Windows' EMF playback does; LibreOffice includes them for Rectangle and Ellipse |
+| `lo-stretchdib-partial.emf`/`.wmf` | Partial StretchDIBits and StretchDIB sources measured from the top of the image | Measured from the bottom row in either row order, as Windows does |
 | `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
 | `lo-exclude-clip.emf` | ExcludeClipRect ignored | Rectangle excluded |
 | `lo-region-copy.emf` | ExtSelectClipRgn RGN_COPY ignored | Region replaces the clip |
@@ -228,7 +229,7 @@ observed to draw; if LibreOffice changes, the test fails for review.
 
 LibreOffice agrees with playback for RGN_OR and RGN_DIFF
 region clipping, OffsetClipRgn, clip paths, ExtCreatePen widths under
-anisotropic page mappings, StretchDIBits upper-left partial sources, AlphaBlend
+anisotropic page mappings, AlphaBlend
 and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
 device patterns differently, and the test backend does not implement them.
 Dashes are likewise left to backends and not compared.
@@ -513,6 +514,13 @@ Corrected after the comparison:
   `lo-exclude-clip.emf`, `lo-raster-ops.emf` and a rounded rectangle; no
   GDI scene got worse. Six-unit pens still differ by one anti-aliased
   pixel on their outer top and left edges.
+- StretchDIBits sources: GDI measures the source y of EMR_STRETCHDIBITS and
+  WMF META_STRETCHDIB from the bottom row of the image, for bottom-up and
+  top-down DIBs, although MS-EMF 2.3.1.7 calls it the upper-left corner.
+  EMR_STRETCHBLT and WMF META_DIBSTRETCHBLT use the top row. Unmatched
+  against GDI, `bitmaps.emf` drops from 240 to 0 and the partial-source
+  experiments (both row orders, EMF, and WMF played natively and converted)
+  to 0.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -532,9 +540,8 @@ Corrected after the comparison:
 Not settled by these runs: some earlier GDI scenes differ from Windows in
 ways not yet investigated. GDI and GDI+ draw nothing at all for
 `lo-mono-brush.emf`, which suggests a generated record they reject, and
-`lo-palette-index.emf`, `lo-restore-reused.emf`
-and `bitmaps.emf` differ in content. They are left for a later comparison
-and are not claimed as agreement either way.
+`lo-palette-index.emf` and `lo-restore-reused.emf` differ in content. They
+are left for a later comparison and are not claimed as agreement either way.
 
 ## Decoder and playback extensions
 

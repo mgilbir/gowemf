@@ -129,6 +129,8 @@ func (p *player) wmf(c Command) error {
 		case 0x33:
 			b.rop, b.deviceSize, b.lowerLeftOrigin, b.scanned = 0x00cc0020, true, true, true
 			b.startScan, b.scans = v.StartScan, v.Scans
+		case 0x43:
+			b.lowerLeftOrigin = true
 		case 0x1d:
 			b.hasBitmap = false
 		}
@@ -344,7 +346,7 @@ func (p *player) emf(c Command) error {
 		return p.blit(b)
 	case EMRStretchDIBits:
 		v := body.(BitmapTransfer)
-		return p.blit(blit{r: r, rop: v.RasterOperation, dest: v.Destination, destSize: v.DestinationSize, src: v.Source, srcSize: v.SourceSize, info: v.Info, bits: v.Bits, hasBitmap: len(v.Info) != 0, usage: v.Usage, colorState: c.ColorState})
+		return p.blit(blit{r: r, rop: v.RasterOperation, dest: v.Destination, destSize: v.DestinationSize, src: v.Source, srcSize: v.SourceSize, info: v.Info, bits: v.Bits, hasBitmap: len(v.Info) != 0, usage: v.Usage, lowerLeftOrigin: true, colorState: c.ColorState})
 	case EMRSetDIBitsToDevice:
 		v := body.(BitmapTransfer)
 		return p.blit(blit{r: r, rop: 0x00cc0020, dest: v.Destination, src: v.Source, srcSize: v.SourceSize, info: v.Info, bits: v.Bits, hasBitmap: len(v.Info) != 0, usage: v.Usage, deviceSize: true, lowerLeftOrigin: true, scanned: true, startScan: v.StartScan, scans: v.Scans, colorState: c.ColorState})

@@ -256,7 +256,7 @@ func agreementScenes() []renderScene {
 		{name: "objects.emf", data: sceneObjects(), probes: []probe{{17, 17, cRed}, {6, 17, cBlue}, {2, 17, cWhite}, {49, 17, cOrange}, {80, 17, cRed}, {17, 48, cBlack}, {49, 46, cWhite}, {49, 55, cMagenta}, {80, 48, cRed}, {70, 48, cBlue}}},
 		{name: "clip.emf", data: sceneClip(), probes: []probe{{20, 14, qRed}, {72, 14, qGreen}, {20, 48, qBlue}, {72, 48, qYellow}, {3, 30, cWhite}, {7, 8, cWhite}, {20, 30, cBlue}, {48, 30, qGreen}, {8, 4, cOrange}, {1, 4, cWhite}}},
 		{name: "paths.emf", data: scenePaths(), probes: []probe{{8, 8, cRed}, {20, 20, cWhite}, {33, 33, cRed}, {55, 20, cRed}, {70, 20, cWhite}, {24, 50, cBlue}, {24, 63, cWhite}}},
-		{name: "bitmaps.emf", data: sceneBitmaps(), probes: []probe{{5, 5, qRed}, {25, 5, qGreen}, {5, 15, qBlue}, {25, 15, qYellow}, {67, 3, cBlack}, {60, 5, qRed}, {40, 5, qGreen}, {72, 4, qRed}, {72, 14, color.NRGBA{25, 225, 225, 255}}, {6, 24, qGreen}, {6, 32, qYellow}, {35, 27, cOrange}, {45, 38, color.NRGBA{148, 158, 238, 255}}, {45, 30, color.NRGBA{243, 79, 15, 255}}, {80, 36, cRed}, {88, 36, cWhite}, {6, 50, qRed}, {26, 50, qGreen}}},
+		{name: "bitmaps.emf", data: sceneBitmaps(), probes: []probe{{5, 5, qRed}, {25, 5, qGreen}, {5, 15, qBlue}, {25, 15, qYellow}, {67, 3, cBlack}, {60, 5, qRed}, {40, 5, qGreen}, {72, 4, qRed}, {72, 14, color.NRGBA{25, 225, 225, 255}}, {6, 24, qGreen}, {6, 32, qYellow}, {35, 27, cOrange}, {45, 38, color.NRGBA{148, 158, 238, 255}}, {45, 30, color.NRGBA{243, 79, 15, 255}}, {80, 36, cRed}, {88, 36, cWhite}}},
 		{name: "mapping.wmf", data: sceneWMFMapping(), probes: []probe{{41, 40, cRed}, {66, 24, cBlue}, {18, 54, cBlue}, {34, 54, cRed}, {82, 11, cRed}}},
 		// A counterclockwise chord under a reflected y axis: EMF applies the
 		// arc direction in logical space and WMF in device space (ORACLES.md).
@@ -448,11 +448,28 @@ func sceneBitmaps() []byte {
 		emfBlt(EMRBitBlt, 70, 2, 16, 8, 0x00cc0020, 0, 0, 0, 0, info, bits),
 		emfBlt(EMRStretchBlt, 70, 12, 16, 8, 0x00330008, 0, 0, 16, 8, info, bits),
 		emfStretchDIBits(2, 20, 16, 16, 8, 0, 8, 8, 0x00cc0020, info, bits),
-		emfStretchDIBits(2, 46, 32, 8, 0, 0, 16, 4, 0x00cc0020, info, bits),
 		emfBlt(EMRBitBlt, 20, 20, 30, 14, 0x00f00021, 0, 0, 0, 0, nil, nil),
 		emfBlt(EMRAlphaBlend, 40, 26, 32, 16, 0x00800000, 0, 0, 16, 8, info, bits),
 		emfBlt(EMRAlphaBlend, 76, 30, 16, 16, 0x01ff0000, 0, 0, 8, 8, alphaInfo, alphaBits),
 	)
+}
+
+// sceneStretchDIBPartial draws the upper and lower halves (source y 0 and 4)
+// of a bottom-up and, in EMF, a top-down 16x8 quadrant DIB.
+func sceneStretchDIBPartial(wmf bool) []byte {
+	up, upBits := sceneDIB(16, 8, false, quadrants)
+	if wmf {
+		packed := cat(up, upBits)
+		return wmfScene(96, 64, 1, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96),
+			testRecord(WMF, MetaStretchDIB, 0, cat(longs(0x00cc0020), words(0, 4, 16, 0, 0, 16, 32, 4, 4), packed)),
+			testRecord(WMF, MetaStretchDIB, 0, cat(longs(0x00cc0020), words(0, 4, 16, 4, 0, 16, 32, 4, 40), packed)))
+	}
+	down, downBits := sceneDIB(16, 8, true, quadrants)
+	return emfScene(96, 64, 1,
+		emfStretchDIBits(4, 4, 32, 16, 0, 0, 16, 4, 0x00cc0020, up, upBits),
+		emfStretchDIBits(44, 4, 32, 16, 0, 4, 16, 4, 0x00cc0020, up, upBits),
+		emfStretchDIBits(4, 36, 32, 16, 0, 0, 16, 4, 0x00cc0020, down, downBits),
+		emfStretchDIBits(44, 36, 32, 16, 0, 4, 16, 4, 0x00cc0020, down, downBits))
 }
 
 // alphaDIB is an 8x8 premultiplied BGRA bitmap: opaque red on the left half,
@@ -570,6 +587,12 @@ func divergenceScenes() []renderScene {
 		{name: "lo-shape-edges.emf", divergence: "EMF RoundRect, ArcTo and Pie exclude their right and bottom edges",
 			data:   sceneShapeEdges(),
 			probes: []probe{{54, 50, cBlue}, {54, 44, cBlack}, {87, 57, cBlue}, {73, 45, cWhite}, {39, 40, cBlue}, {20, 53, cBlue}}, libreOffice: []probe{{39, 40, cWhite}, {20, 53, cWhite}}},
+		{name: "lo-stretchdib-partial.emf", divergence: "partial StretchDIBits sources are measured from the top of the image",
+			data:   sceneStretchDIBPartial(false),
+			probes: []probe{{12, 12, qBlue}, {28, 12, qYellow}, {12, 44, qBlue}, {28, 44, qYellow}, {52, 12, qRed}, {68, 44, qGreen}}, libreOffice: []probe{{12, 12, qRed}, {28, 12, qGreen}, {12, 44, qRed}, {52, 12, qBlue}}},
+		{name: "lo-stretchdib-partial.wmf", divergence: "partial WMF StretchDIB sources are measured from the top of the image",
+			data:   sceneStretchDIBPartial(true),
+			probes: []probe{{12, 12, qBlue}, {28, 12, qYellow}, {52, 12, qRed}, {68, 12, qGreen}}, libreOffice: []probe{{12, 12, qRed}, {52, 12, qBlue}}},
 		{name: "lo-winding.emf", divergence: "WINDING (nonzero) polygon fill is drawn as ALTERNATE",
 			data:   emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetPolyFillMode, 2), emfPolyPolygon(EMRPolyPolygon, []int32{4, 4, 60, 4, 60, 60, 4, 60}, []int32{20, 20, 80, 20, 80, 50, 20, 50})),
 			probes: []probe{{40, 30, cBlue}, {10, 10, cBlue}, {70, 30, cBlue}}, libreOffice: []probe{{40, 30, cWhite}, {10, 10, cBlue}, {70, 30, cBlue}}},

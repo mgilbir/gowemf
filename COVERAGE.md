@@ -240,10 +240,13 @@ Interpretations where the specifications leave room or conflict:
 - ExtSelectClipRgn regions are logical units, as MS-EMF 2.3.2.2 specifies. The
   "no effect" rule for bitmap records whose Bounds miss the clip is not applied;
   the drawing itself is clipped.
-- StretchDIBits sources use an upper-left origin and SetDIBitsToDevice a
-  lower-left origin, per MS-EMF 2.3.1.7 and 2.3.1.5; the WMF StretchDIB and
-  SetDIBToDev records follow the same rules. A lower-left source in a top-down
-  DIB is reported unless the source is the whole bitmap. Source rectangles are
+- SetDIBitsToDevice sources have a lower-left origin (MS-EMF 2.3.1.5).
+  MS-EMF 2.3.1.7 gives StretchDIBits sources an upper-left origin, but
+  Windows measures them from the bottom row of the image, in bottom-up and
+  top-down DIBs alike; Play follows Windows (ORACLES.md). The WMF StretchDIB
+  and SetDIBToDev records follow the same rules; StretchBlt, BitBlt and the
+  WMF DIBBitBlt and DIBStretchBlt keep an upper-left origin. A partial
+  SetDIBitsToDevice source in a top-down DIB is reported. Source rectangles are
   clamped to the bitmap and only existing pixels are drawn. A source
   transform (xformSrc) that leaves the source with fractional edges maps it
   exactly onto the destination, clipped there as for EMF+ images; GDI's own

@@ -24,7 +24,7 @@ type blit struct {
 	src, srcSize     Point
 	plg              []Point // PlgBlt upper-left, upper-right, lower-left
 	deviceSize       bool    // SetDIBitsToDevice: no stretching, size in device pixels
-	lowerLeftOrigin  bool    // source y is the lower-left corner of a bottom-up DIB
+	lowerLeftOrigin  bool    // source y is the lower-left corner, measured from the bottom row
 	info, bits       []byte  // EMF split DIB
 	packed           []byte  // WMF packed DIB
 	hasBitmap        bool
@@ -161,10 +161,12 @@ func (p *player) blit(b blit) error {
 	if b.scanned && (b.startScan != 0 || uint64(b.scans) != uint64(d.height)) {
 		return p.unsupported(b.r, "partial scan-line bitmap transfer")
 	}
-	if b.lowerLeftOrigin && !b.topDownFullSource(d) {
-		if d.topDown {
+	if b.lowerLeftOrigin && !b.fullSource(d) {
+		if d.topDown && b.scanned {
 			return p.unsupported(b.r, "lower-left source origin in a top-down DIB")
 		}
+		// StretchDIBits measures the source from the bottom row of the
+		// image in either row order (ORACLES.md).
 		b.src.Y = float64(d.height) - b.src.Y - b.srcSize.Y
 	}
 	if err := p.spendPixels(b.r, d.width, d.height); err != nil {
@@ -427,9 +429,9 @@ func (b blit) destinationArea(m Matrix) Path {
 	return path.path
 }
 
-// topDownFullSource reports a source rectangle covering the whole bitmap, for
+// fullSource reports a source rectangle covering the whole bitmap, for
 // which the source origin convention is irrelevant.
-func (b blit) topDownFullSource(d *DIB) bool {
+func (b blit) fullSource(d *DIB) bool {
 	return b.src == (Point{}) && b.srcSize == Point{float64(d.width), float64(d.height)}
 }
 

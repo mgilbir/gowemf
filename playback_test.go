@@ -550,10 +550,12 @@ func TestPlayPlacesBitmaps(t *testing.T) {
 		t.Fatal("PlgBlt", m)
 	}
 	// Source rectangles extending beyond the bitmap are clipped to it, and a
-	// HALFTONE stretch mode requests smoothing.
+	// HALFTONE stretch mode requests smoothing. StretchDIBits sources have a
+	// lower-left origin: rows 4 to 14 from the bottom of 8 are image rows -6
+	// to 4, of which 0 to 4 exist and land 12 units down.
 	b = record(t, emfScene(96, 64, 1, emfValue(EMRSetStretchBltMode, 4), emfStretchDIBits(0, 0, 40, 20, 8, 4, 20, 10, 0x00cc0020, info, bits)), PlayOptions{})
 	d := b.images[0].draw
-	if d.Source != image.Rect(8, 4, 16, 8) || !d.Smooth || !near(d.Transform.Apply(Point{8, 4}), Point{0, 0}) {
+	if d.Source != image.Rect(8, 0, 16, 4) || !d.Smooth || !near(d.Transform.Apply(Point{8, 0}), Point{0, 12}) {
 		t.Fatal("clamped source", d.Source, d.Transform)
 	}
 	// SRCCOPY ignores DIB alpha; NOTSRCCOPY inverts; TransparentBlt keys.
@@ -567,6 +569,26 @@ func TestPlayPlacesBitmaps(t *testing.T) {
 	}
 	if c := color.NRGBAModel.Convert(img.At(12, 2)).(color.NRGBA); c != qGreen {
 		t.Fatal("unkeyed pixel", c)
+	}
+	// The lower-left origin counts from the bottom row in either row order;
+	// StretchBlt and WMF DIBStretchBlt keep an upper-left origin.
+	topInfo, topBits := sceneDIB(16, 8, true, quadrants)
+	packed := cat(info, bits)
+	for _, c := range []struct {
+		name string
+		data []byte
+		want image.Rectangle
+	}{
+		{"bottom-up StretchDIBits", emfScene(96, 64, 1, emfStretchDIBits(0, 0, 16, 4, 0, 1, 16, 3, 0x00cc0020, info, bits)), image.Rect(0, 4, 16, 7)},
+		{"top-down StretchDIBits", emfScene(96, 64, 1, emfStretchDIBits(0, 0, 16, 4, 0, 1, 16, 3, 0x00cc0020, topInfo, topBits)), image.Rect(0, 4, 16, 7)},
+		{"StretchBlt", emfScene(96, 64, 1, emfBlt(EMRStretchBlt, 0, 0, 16, 4, 0x00cc0020, 0, 1, 16, 3, info, bits)), image.Rect(0, 1, 16, 4)},
+		{"WMF StretchDIB", wmfScene(96, 64, 1, testRecord(WMF, MetaStretchDIB, 0, cat(longs(0x00cc0020), words(0, 3, 16, 1, 0, 4, 16, 0, 0), packed))), image.Rect(0, 4, 16, 7)},
+		{"WMF DIBStretchBlt", wmfScene(96, 64, 1, testRecord(WMF, MetaDIBStretchBlt, 0, cat(longs(0x00cc0020), words(3, 16, 1, 0, 4, 16, 0, 0), packed))), image.Rect(0, 1, 16, 4)},
+	} {
+		b = record(t, c.data, PlayOptions{})
+		if len(b.images) != 1 || b.images[0].draw.Source != c.want {
+			t.Fatal(c.name, b.images)
+		}
 	}
 	// SetDIBitsToDevice copies 1:1 device pixels from a lower-left origin.
 	b = record(t, emfScene(96, 64, 1, emfValue(EMRSetMapMode, 8), emfPoint(EMRSetViewportExtEx, 4, 4), emfSetDIBitsToDevice(2, 3, 8, 0, 8, 4, 8, info, bits)), PlayOptions{})

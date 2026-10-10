@@ -196,6 +196,24 @@ func textScenes() []textScene {
 			// Bars end at the sum of the advances: 8+5*15 and 8+6*15.
 			probes:      []ink{{79, 32, 83, 38, true}, {84, 30, 92, 40, false}, {96, 68, 98, 76, true}, {99, 66, 106, 78, false}},
 			libreOffice: []ink{{79, 32, 83, 38, true}, {84, 30, 92, 40, false}, {96, 68, 98, 76, true}, {99, 66, 106, 78, false}}},
+		// Right-to-left reading order: Hebrew read right to left with the
+		// digits and Latin letters inside it left to right, and the same
+		// characters in a left-to-right paragraph.
+		{name: "text-bidi.emf", data: emfDoc(w, h,
+			emfFont(1, -24, 0, 0, 0), emfSelect(1), emfValue(18, 1),
+			emfText(1, 8, 4, 0x80, nil, "\u05e9\u05dc\u05d5\u05dd 2024 ok", spacing(12, 14)),
+			emfText(1, 8, 52, 0, nil, "ok \u05e9\u05dc\u05d5\u05dd 2024", spacing(12, 14)),
+		),
+			// The right-to-left line ends with the first Hebrew letter
+			// (shin, 9 units wide at 14-unit spacing) at 8+11*14; the
+			// left-to-right line starts with "ok".
+			probes: []ink{{162, 8, 174, 26, true}, {8, 8, 34, 26, true}, {8, 56, 34, 74, true}, {176, 4, 192, 30, false}}},
+		{name: "text-bidi-decoration.emf", partial: "decoration stroke position and thickness are each renderer's font policy; playback supplies the extent",
+			data: emfDoc(w, h, emfFont(1, -24, 0, 1, 0), emfSelect(1), emfValue(18, 1), emfValue(22, 24),
+				emfText(1, 8, 40, 0x80, nil, "\u05e9\u05dc\u05d5\u05dd ab", spacing(7, 15))),
+			// The underline runs from 8 to 8+7*15 whatever the order.
+			probes:      []ink{{9, 40, 12, 46, true}, {109, 40, 112, 46, true}, {114, 38, 122, 48, false}},
+			libreOffice: []ink{{9, 40, 12, 46, true}, {109, 40, 112, 46, true}, {114, 38, 122, 48, false}}},
 		{name: "lo-text-no-rect.emf", divergence: "ETO_NO_RECT text is misparsed: the absent rectangle is read anyway and glyphs are stacked",
 			data:   emfDoc(w, h, emfFont(1, -24, 0, 0, 0), emfSelect(1), emfValue(18, 1), noRectText(1, 8, 4, "Left", spacing(4, 14))),
 			probes: []ink{{48, 4, 60, 30, true}}, libreOffice: []ink{{48, 4, 60, 30, false}}},

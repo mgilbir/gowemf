@@ -141,7 +141,8 @@ Backends that also implement `TextBackend` (`MeasureText` and `DrawText`)
 receive text. `Play` does the GDI placement itself: text alignment, explicit
 and default spacing with character extra and justification, escapement,
 GM_COMPATIBLE versus GM_ADVANCED transforms, background cells, opaque and clip
-rectangles and current-position updates. It asks the backend only for each
+rectangles, current-position updates, and bidirectional ordering with the
+Unicode Bidirectional Algorithm, including right-to-left reading order. It asks the backend only for each
 run's ascent, descent and advances, and hands it positioned code units or glyph
 indexes with a text-space transform; font realization, shaping, underline and
 strikeout are the backend's. ANSI strings are decoded with the Windows code

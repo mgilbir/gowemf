@@ -2,6 +2,7 @@ package gowemf
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"unicode/utf16"
@@ -339,7 +340,6 @@ func TestPlayTextObjectsAndOmissions(t *testing.T) {
 		t.Fatal("PolyTextOut", b.drawn)
 	}
 	for name, recs := range map[string][][]byte{
-		"right-to-left":  {font, emfSelect(1), emfText(1, 0, 0, 0x80, nil, "a", nil, nil)},
 		"vertical font":  {emfFont(1, -20, 0, 0, 0, "@MS Mincho"), emfSelect(1), text},
 		"path bracket":   {emfEmpty(EMRBeginPath), text, emfEmpty(EMRAbortPath)},
 		"text color":     {emfValue(EMRSetTextColor, 0x01000002), text},
@@ -366,5 +366,87 @@ func TestPlayTextObjectsAndOmissions(t *testing.T) {
 	}
 	if _, err := Play(emfScene(96, 64, 2, text), PlayOptions{Destination: Box{Width: 1, Height: 1}}, &fakeText{bad: &TextMetrics{Ascent: math.NaN(), Advances: []float64{1}}}); err == nil {
 		t.Fatal("NaN ascent accepted")
+	}
+}
+
+// TestPlayTextBidi places text by the Unicode Bidirectional Algorithm, with a
+// right-to-left paragraph under ETO_RTLREADING or TA_RTLREADING. The font has
+// a 20-unit em, so letters advance 10 and spaces 5; positions are hand
+// derived from UAX #9.
+func TestPlayTextBidi(t *testing.T) {
+	font := emfFont(1, -20, 0, 0, 0, "Face")
+	xs := func(run TextRun) []float64 {
+		out := make([]float64, len(run.Origins))
+		for i, o := range run.Origins {
+			out[i] = o.X
+		}
+		return out
+	}
+	same := func(a []float64, b ...float64) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if math.Abs(a[i]-b[i]) > 1e-9 {
+				return false
+			}
+		}
+		return true
+	}
+	for _, c := range []struct {
+		name    string
+		records [][]byte
+		levels  []uint8
+		x       []float64
+	}{
+		// Explicit advances are laid right to left; each letter (10 wide)
+		// ends at the right of its advance.
+		{"ETO_RTLREADING", [][]byte{emfText(1, 0, 0, 0x80, nil, "\u05e9\u05dc\u05d5\u05dd", nil, []int32{10, 20, 30, 40})}, []uint8{1, 1, 1, 1}, []float64{90, 80, 60, 30}},
+		{"TA_RTLREADING", [][]byte{emfValue(EMRSetTextAlign, 0x100), emfText(1, 0, 0, 0, nil, "\u05e9\u05dc\u05d5\u05dd", nil, []int32{10, 20, 30, 40})}, []uint8{1, 1, 1, 1}, []float64{90, 80, 60, 30}},
+		// Numbers and Latin text keep their order inside Hebrew text.
+		{"mixed, right to left", [][]byte{emfText(1, 0, 0, 0x80, nil, "\u05d0\u05d1 12 cd", nil, nil)}, []uint8{1, 1, 1, 2, 2, 1, 2, 2}, []float64{60, 50, 45, 25, 35, 20, 0, 10}},
+		{"mixed, left to right", [][]byte{emfText(1, 0, 0, 0, nil, "\u05d0\u05d1 12 cd", nil, nil)}, []uint8{1, 1, 1, 2, 2, 0, 0, 0}, []float64{35, 25, 20, 0, 10, 45, 50, 60}},
+		// Right-aligned: the same layout ends at the reference point, the origin of text space.
+		{"right aligned", [][]byte{emfValue(EMRSetTextAlign, 2), emfText(1, 70, 0, 0x80, nil, "\u05d0\u05d1 12 cd", nil, nil)}, []uint8{1, 1, 1, 2, 2, 1, 2, 2}, []float64{-10, -20, -25, -45, -35, -50, -70, -60}},
+		// A surrogate pair stays together, in logical order.
+		{"surrogates", [][]byte{emfText(1, 0, 0, 0x80, nil, "\U00010900\u05d0", nil, nil)}, []uint8{1, 1, 1}, []float64{10, 20, 0}},
+		// Each paragraph separator ends a paragraph on the same line.
+		{"paragraphs", [][]byte{emfText(1, 0, 0, 0x80, nil, "ab\u2029cd", nil, nil)}, []uint8{2, 2, 1, 2, 2}, []float64{30, 40, 20, 0, 10}},
+		// Paired brackets resolve together (UAX #9 N0).
+		{"brackets", [][]byte{emfText(1, 0, 0, 0x80, nil, "\u05d0 a(b)", nil, nil)}, []uint8{1, 1, 2, 2, 2, 2}, []float64{45, 40, 0, 10, 20, 30}},
+		// An embedding ends with its paragraph (UAX #9 P1, X8).
+		{"embedding and paragraph", [][]byte{emfText(1, 0, 0, 0, nil, "\u202bab\u2029cd", nil, nil)}, []uint8{0, 2, 2, 0, 0, 0}, []float64{0, 10, 20, 30, 40, 50}},
+		// A joiner removed by rule X9 stays inside its right-to-left run.
+		{"joiner", [][]byte{emfText(1, 0, 0, 0, nil, "\u05d0\u200d\u05d1", nil, nil)}, []uint8{1, 1, 1}, []float64{20, 10, 0}},
+		// Glyph indexes are laid right to left; without the flag they are
+		// left to right with no levels.
+		{"glyphs", [][]byte{emfText(1, 0, 0, 0x80|0x10, nil, "\x05\x06\x07", nil, nil)}, []uint8{1, 1, 1}, []float64{20, 10, 0}},
+		{"glyphs left to right", [][]byte{emfText(1, 0, 0, 0x10, nil, "\x05\x06\x07", nil, nil)}, nil, []float64{0, 10, 20}},
+		{"latin left to right", [][]byte{emfText(1, 0, 0, 0, nil, "ab c", nil, nil)}, nil, []float64{0, 10, 20, 25}},
+	} {
+		b := playText(t, emfScene(96, 64, 2, append([][]byte{font, emfSelect(1)}, c.records...)...), PlayOptions{})
+		if len(b.drawn) != 1 {
+			t.Fatal(c.name, len(b.drawn))
+		}
+		run := b.drawn[0]
+		if fmt.Sprint(run.Levels) != fmt.Sprint(c.levels) || fmt.Sprint(b.measured[0].Levels) != fmt.Sprint(c.levels) || !same(xs(run), c.x...) {
+			t.Errorf("%s: levels %v (measured %v), x %v; want %v, %v", c.name, run.Levels, b.measured[0].Levels, xs(run), c.levels, c.x)
+		}
+		left := math.Inf(1)
+		for _, x := range c.x {
+			left = math.Min(left, x)
+		}
+		if c.name == "ETO_RTLREADING" || c.name == "TA_RTLREADING" {
+			left = 0
+		}
+		if run.Left != left {
+			t.Errorf("%s: Left %v, want %v", c.name, run.Left, left)
+		}
+	}
+	// WMF: TA_RTLREADING with Hebrew ANSI text (code page 1255).
+	wfont := testRecord(WMF, MetaCreateFontIndirect, 0, cat(words(-20, 0, 0, 0, 400), []byte{0, 0, 0, 177, 0, 0, 0, 0}, face32("Face")))
+	wb := playText(t, wmfScene(96, 64, 1, wfont, wmfRec(MetaSelectObject, 0), wmfRec(MetaSetTextAlign, 0x100), wmfTextOut(0, 0, "\xe0\xe1 1")), PlayOptions{})
+	if run := wb.drawn[0]; string(utf16.Decode(run.Text)) != "\u05d0\u05d1 1" || fmt.Sprint(run.Levels) != "[1 1 1 2]" || !same(xs(run), 25, 15, 10, 0) {
+		t.Fatalf("WMF: %q %v %v", string(utf16.Decode(run.Text)), run.Levels, xs(run))
 	}
 }

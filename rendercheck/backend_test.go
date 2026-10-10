@@ -243,12 +243,12 @@ func (b *backend) DrawText(run gowemf.TextRun, clip gowemf.Clip) error {
 			return err
 		}
 	}
-	// Underline and strikeout span the run from its first origin to the end
-	// of its last advance; they are filled separately from the glyphs so
-	// contour winding cannot cancel them.
+	// Underline and strikeout span the run from Left over the sum of its
+	// advances; they are filled separately from the glyphs so contour
+	// winding cannot cancel them.
 	path = raster.Path{}
 	if (run.Font.Underline || run.Font.StrikeOut) && len(gids) > 0 {
-		x0, x1 := run.Origins[0].X, run.Origins[0].X
+		x0, x1 := run.Left, run.Left
 		for _, a := range run.Advances {
 			x1 += a
 		}

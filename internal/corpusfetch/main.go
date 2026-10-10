@@ -24,6 +24,7 @@ func main() {
 func run() error {
 	oracle := flag.Bool("oracle", false, "download pinned execution-only POI oracle jars")
 	codepages := flag.Bool("codepages", false, "download pinned Windows code page data files")
+	unicode := flag.Bool("unicode", false, "download pinned Unicode Character Database files")
 	flag.Parse()
 	client := &http.Client{
 		Timeout: 45 * time.Second,
@@ -47,6 +48,15 @@ func run() error {
 	if *codepages {
 		for _, f := range corpus.CodePages {
 			if err := fetchURL(client, filepath.Join(".external", "codepages"), f, corpus.CodePageURL+f.Path); err != nil {
+				return fmt.Errorf("%s: %w", f.Path, err)
+			}
+			fmt.Println("verified", f.Path)
+		}
+		return nil
+	}
+	if *unicode {
+		for _, f := range corpus.UnicodeFiles {
+			if err := fetchURL(client, filepath.Join(".external", "unicode"), f, corpus.UnicodeURL+f.Path); err != nil {
 				return fmt.Errorf("%s: %w", f.Path, err)
 			}
 			fmt.Println("verified", f.Path)

@@ -1,4 +1,4 @@
-.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download codepages-download codepages test-external oracle-download test-oracle test-render rendercheck-vet
+.PHONY: check build test vet fmt-check race test-32 fuzz bench corpus-download codepages-download codepages unicode-download bidi test-external oracle-download test-oracle test-render rendercheck-vet
 
 check: fmt-check build test vet race test-32
 
@@ -41,8 +41,15 @@ codepages-download:
 codepages: codepages-download
 	go run ./internal/codepagegen
 
-test-external: corpus-download codepages-download
+unicode-download:
+	go run ./internal/corpusfetch -unicode
+
+bidi: unicode-download
+	go run ./internal/bidigen
+
+test-external: corpus-download codepages-download unicode-download
 	GOWEMF_EXTERNAL=1 go test -run='TestExternalCorpus|TestCodePageTables' -count=1 -v .
+	GOWEMF_EXTERNAL=1 go test -run='TestTables|TestBidiTest|TestBidiCharacterTest' -count=1 -v ./internal/bidi
 
 oracle-download:
 	go run ./internal/corpusfetch -oracle

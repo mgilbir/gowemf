@@ -68,6 +68,18 @@ not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
+## Unicode bidirectional data
+
+`internal/bidi/tables.go` is generated from the Unicode Character Database
+18.0.0 files `extracted/DerivedBidiClass.txt` and `BidiBrackets.txt`
+(https://www.unicode.org/Public/18.0.0/ucd/); only the Bidi_Class of each
+code point and the paired brackets are retained. The conformance tests
+`BidiTest.txt` and `BidiCharacterTest.txt` are used under make test-external.
+The pinned files are downloaded to `.external/unicode` and are not committed.
+They are distributed under the Unicode License V3 reproduced in the Windows
+code page data section above. The algorithm is implemented from Unicode
+Standard Annex #9 revision 52.
+
 ## Test-only typesetting dependency
 
 The separate `rendercheck` module, which holds render-oracle tests only, uses

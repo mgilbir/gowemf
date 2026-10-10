@@ -162,19 +162,20 @@ curved-stroke solidity, exact clip combination and the comparison metric each
 have generated tests. It centers lines on device pixels using
 `Stroke.PixelCenter`.
 
-There are eight 96x64 agreement scenes. Four EMF scenes combine the requested
+There are ten 96x64 agreement scenes. Four EMF scenes combine the requested
 features: nested save/restore with set, left- and right-multiplied and reset
 world transforms; anisotropic mappings with each and both axes reflected, an arc
 in reflected space, MM_LOMETRIC, inherited fixed extents and a pen scaled by the
 mapping; pen/brush selection, stock objects, deleted and reused slots, geometric
 pens and restored selections; and clipped paths and bitmap transfers with
 rectangle, path and region clipping, union, difference, offset and save/restore.
-Two EMF scenes cover path brackets (alternate fill, Bézier/arc construction,
-closure, stroke-and-fill, a clockwise pie) and bitmap placement (full, mirrored,
+Two EMF scenes cover path brackets (alternate fill, Bézier construction,
+closure, stroke-and-fill) and bitmap placement (full, mirrored,
 partial-width and partial-height sources, BitBlt, NOTSRCCOPY, PATCOPY, constant
 and per-pixel alpha). Two WMF scenes cover the placeable mapping, reflected
 windows with SaveDC, lowest-free-slot reuse, geometric and hairline pens, and
-clipped DIB transfers.
+clipped DIB transfers. `arc-reflected.emf` and `.wmf` draw a counterclockwise
+chord under a reflected y axis, which EMF and WMF playback orient differently.
 
 Comparison is symmetric: each channel of every pixel must lie within 40/255 of
 the range spanned by the other image's 3x3 neighborhood, with at most 0.5% of
@@ -210,11 +211,11 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | Scene | LibreOffice 24.2.7.2 behavior | Playback behavior |
 | --- | --- | --- |
 | `lo-isotropic.emf` | MM_ISOTROPIC viewport left anisotropic | Adjusted to square units (MS-WMF 2.1.1.16) |
-| `lo-compatible-arc.emf` | EMF arc direction applied in logical space under a one-axis reflection | Unreflected device-space direction (MS-EMF 2.1.16); LibreOffice's WMF import agrees with playback |
 | `lo-createpen-width.emf` | EMR_CREATEPEN width drawn as a hairline | Logical width (see COVERAGE.md) |
 | `lo-world-pen.emf` | Geometric pen not transformed by an anisotropic world transform | Pen follows the world transform under GM_ADVANCED |
 | `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
 | `lo-restore-reused.emf` | RestoreDC reselects a deleted pen by value | Default pen |
+| `lo-shape-edges.emf` | EMF RoundRect, ArcTo and a clockwise Pie built without their right and bottom edges | Edges included, as Windows' EMF playback does; LibreOffice includes them for Rectangle and Ellipse |
 | `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
 | `lo-exclude-clip.emf` | ExcludeClipRect ignored | Rectangle excluded |
 | `lo-region-copy.emf` | ExtSelectClipRgn RGN_COPY ignored | Region replaces the clip |
@@ -225,7 +226,7 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-setdibits.emf` | EMR_SETDIBITSTODEVICE draws nothing | 1:1 device pixels, lower-left source origin |
 | `lo-transparentblt.emf` | EMR_TRANSPARENTBLT draws nothing | Color-keyed transfer |
 
-LibreOffice agrees with playback for the WMF arc direction, RGN_OR and RGN_DIFF
+LibreOffice agrees with playback for RGN_OR and RGN_DIFF
 region clipping, OffsetClipRgn, clip paths, ExtCreatePen widths under
 anisotropic page mappings, StretchDIBits upper-left partial sources, AlphaBlend
 and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
@@ -494,6 +495,24 @@ Corrected after the comparison:
   attributes GDI+ draws nothing where a source rectangle extends past a
   bitmap or metafile image (`rec-image-outside.emf`), so Play no longer
   reports that case.
+- Shape construction: GDI's EMF playback builds Rectangle, RoundRect,
+  Ellipse, Arc, Chord, Pie and ArcTo as under GM_ADVANCED even with an
+  identity world transform: in logical space with the right and bottom edges
+  included, so a page mapping that reflects one axis reverses the displayed
+  arc direction and reflecting both does not. MS-EMF 2.1.16's GM_COMPATIBLE
+  rules (device space, edges excluded, arc direction unreflected) are what
+  GDI applies to WMF, played natively with `PlayMetaFile` or converted with
+  `SetWinMetaFileBits`. GDI+ draws EMF arcs in logical space too but
+  excludes the edges. Play follows GDI. Measured pixel for pixel, null-pen
+  EMF rectangles under identity, scaled, reflected and world-transformed
+  mappings fill the same 40 x 30 pixels as GDI, 1-pixel outlines land on
+  the same columns (x 10 and 50 in EMF, 10 and 49 in WMF), and WINDING
+  paths of a polygon and a rectangle show that the rectangle reverses with
+  the mapping. Unmatched against GDI, the reflected arc, chord and pie
+  scenes drop from up to 2,152 to 0, as do `clip.emf`, `objects.emf`,
+  `lo-exclude-clip.emf`, `lo-raster-ops.emf` and a rounded rectangle; no
+  GDI scene got worse. Six-unit pens still differ by one anti-aliased
+  pixel on their outer top and left edges.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -513,7 +532,7 @@ Corrected after the comparison:
 Not settled by these runs: some earlier GDI scenes differ from Windows in
 ways not yet investigated. GDI and GDI+ draw nothing at all for
 `lo-mono-brush.emf`, which suggests a generated record they reject, and
-`lo-compatible-arc.emf`, `lo-palette-index.emf`, `lo-restore-reused.emf`
+`lo-palette-index.emf`, `lo-restore-reused.emf`
 and `bitmaps.emf` differ in content. They are left for a later comparison
 and are not claimed as agreement either way.
 

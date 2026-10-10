@@ -251,13 +251,21 @@ const nullPen, blackBrush, nullBrush = 0x80000008, 0x80000004, 0x80000005
 
 func agreementScenes() []renderScene {
 	return []renderScene{
-		{name: "transforms.emf", data: sceneTransforms(), probes: []probe{{31, 17, cRed}, {54, 58, cBlue}, {50, 30, cGreen}, {66, 28, cRed}, {86, 54, cBlack}, {90, 58, cBlack}, {91, 54, cWhite}, {86, 59, cWhite}, {2, 60, cWhite}}},
+		{name: "transforms.emf", data: sceneTransforms(), probes: []probe{{31, 17, cRed}, {54, 58, cBlue}, {50, 30, cGreen}, {66, 28, cRed}, {86, 54, cBlack}, {91, 59, cBlack}, {92, 54, cWhite}, {86, 60, cWhite}, {2, 60, cWhite}}},
 		{name: "mapping.emf", data: sceneMapping(), probes: []probe{{20, 20, cRed}, {44, 20, cWhite}, {37, 8, cBlue}, {64, 10, cWhite}, {80, 10, cGreen}, {64, 22, cGreen}, {80, 22, cGreen}, {24, 50, cRed}, {50, 50, cWhite}, {66, 46, cBlue}, {60, 51, cBlack}, {60, 56, cBlue}, {86, 46, cGreen}}},
 		{name: "objects.emf", data: sceneObjects(), probes: []probe{{17, 17, cRed}, {6, 17, cBlue}, {2, 17, cWhite}, {49, 17, cOrange}, {80, 17, cRed}, {17, 48, cBlack}, {49, 46, cWhite}, {49, 55, cMagenta}, {80, 48, cRed}, {70, 48, cBlue}}},
 		{name: "clip.emf", data: sceneClip(), probes: []probe{{20, 14, qRed}, {72, 14, qGreen}, {20, 48, qBlue}, {72, 48, qYellow}, {3, 30, cWhite}, {7, 8, cWhite}, {20, 30, cBlue}, {48, 30, qGreen}, {8, 4, cOrange}, {1, 4, cWhite}}},
-		{name: "paths.emf", data: scenePaths(), probes: []probe{{8, 8, cRed}, {20, 20, cWhite}, {33, 33, cRed}, {55, 20, cRed}, {70, 20, cWhite}, {24, 50, cBlue}, {24, 61, cWhite}, {54, 50, cBlue}, {54, 44, cBlack}, {87, 57, cBlue}, {73, 45, cWhite}}},
+		{name: "paths.emf", data: scenePaths(), probes: []probe{{8, 8, cRed}, {20, 20, cWhite}, {33, 33, cRed}, {55, 20, cRed}, {70, 20, cWhite}, {24, 50, cBlue}, {24, 63, cWhite}}},
 		{name: "bitmaps.emf", data: sceneBitmaps(), probes: []probe{{5, 5, qRed}, {25, 5, qGreen}, {5, 15, qBlue}, {25, 15, qYellow}, {67, 3, cBlack}, {60, 5, qRed}, {40, 5, qGreen}, {72, 4, qRed}, {72, 14, color.NRGBA{25, 225, 225, 255}}, {6, 24, qGreen}, {6, 32, qYellow}, {35, 27, cOrange}, {45, 38, color.NRGBA{148, 158, 238, 255}}, {45, 30, color.NRGBA{243, 79, 15, 255}}, {80, 36, cRed}, {88, 36, cWhite}, {6, 50, qRed}, {26, 50, qGreen}}},
 		{name: "mapping.wmf", data: sceneWMFMapping(), probes: []probe{{41, 40, cRed}, {66, 24, cBlue}, {18, 54, cBlue}, {34, 54, cRed}, {82, 11, cRed}}},
+		// A counterclockwise chord under a reflected y axis: EMF applies the
+		// arc direction in logical space and WMF in device space (ORACLES.md).
+		{name: "arc-reflected.emf", data: emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetMapMode, 2), emfPoint(EMRSetViewportOrgEx, 0, 64), emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50)),
+			probes: []probe{{36, 36, cWhite}, {36, 52, cBlue}}},
+		{name: "arc-reflected.wmf", data: wmfScene(96, 64, 2, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96),
+			wmfRec(MetaSetViewportOrg, 64, 0), wmfRec(MetaSetViewportExt, -64, 96), wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 1),
+			wmfRec(MetaChord, 32, 10, 32, 90, 60, 90, 4, 10)),
+			probes: []probe{{48, 20, cBlue}, {48, 44, cWhite}}},
 		{name: "objects.wmf", data: sceneWMFObjects(), probes: []probe{{16, 16, cRed}, {4, 16, cBlue}, {48, 16, cOrange}, {80, 16, cMagenta}, {60, 44, cWhite}, {54, 38, qRed}, {78, 40, qGreen}, {82, 40, cWhite}, {20, 34, cBlack}}},
 	}
 }
@@ -403,12 +411,27 @@ func scenePaths() []byte {
 		emfEmpty(EMRBeginPath),
 		emfPoint(EMRMoveToEx, 8, 60),
 		emfPoints(EMRPolyBezierTo, 8, 40, 40, 40, 40, 60),
+		emfEmpty(EMRCloseFigure),
+		emfEmpty(EMREndPath),
+		emfBox(EMRStrokeAndFillPath, 0, 0, 0, 0),
+	)
+}
+
+// sceneShapeEdges draws an ArcTo in a path bracket, a clockwise pie and a
+// rounded rectangle, whose right and bottom edges EMF playback includes.
+func sceneShapeEdges() []byte {
+	return emfScene(96, 64, 4,
+		emfBrush(1, 0, blue), emfExtPen(2, 0x10000, 3, black), emfSelect(1), emfSelect(2),
+		emfEmpty(EMRBeginPath),
+		emfPoint(EMRMoveToEx, 40, 60),
 		emfArc(EMRArcTo, 44, 44, 64, 60, 64, 52, 44, 52),
 		emfEmpty(EMRCloseFigure),
 		emfEmpty(EMREndPath),
 		emfBox(EMRStrokeAndFillPath, 0, 0, 0, 0),
 		emfValue(EMRSetArcDirection, 2),
 		emfArc(EMRPie, 66, 40, 94, 62, 94, 51, 80, 62),
+		emfSelect(nullPen),
+		emfRecord(EMRRoundRect, longs(4, 26, 40, 54, 8, 8)),
 	)
 }
 
@@ -529,9 +552,6 @@ func divergenceScenes() []renderScene {
 		{name: "lo-isotropic.emf", divergence: "MM_ISOTROPIC viewport is not adjusted to square units (MS-WMF 2.1.1.16)",
 			data:   emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetMapMode, 7), emfPoint(EMRSetWindowExtEx, 100, 100), emfPoint(EMRSetViewportExtEx, 96, 32), emfBox(EMRRectangle, 0, 0, 100, 100)),
 			probes: []probe{{16, 16, cBlue}, {60, 16, cWhite}}, libreOffice: []probe{{16, 16, cBlue}, {60, 16, cBlue}}},
-		{name: "lo-compatible-arc.emf", divergence: "EMF arc direction is applied in logical space under a one-axis reflection; GM_COMPATIBLE arcs must not reflect the transform (MS-EMF 2.1.16)",
-			data:   emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetMapMode, 2), emfPoint(EMRSetViewportOrgEx, 0, 64), emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50)),
-			probes: []probe{{36, 36, cBlue}, {36, 52, cWhite}}, libreOffice: []probe{{36, 36, cWhite}, {36, 52, cBlue}}},
 		{name: "lo-createpen-width.emf", divergence: "EMR_CREATEPEN widths without PS_GEOMETRIC are drawn as hairlines",
 			data:   emfScene(96, 64, 4, emfPen(1, 0, 12, blue), emfSelect(1), emfSelect(nullBrush), emfPoints(EMRPolyline, 10, 30, 86, 30)),
 			probes: []probe{{48, 26, cBlue}, {48, 33, cBlue}}, libreOffice: []probe{{48, 26, cWhite}, {48, 33, cWhite}}},
@@ -547,6 +567,9 @@ func divergenceScenes() []renderScene {
 		{name: "lo-restore-reused.emf", divergence: "RestoreDC reselects a pen whose slot was deleted and reused; playback falls back to the default pen",
 			data:   emfScene(96, 64, 4, emfExtPen(1, 0x10000, 8, blue), emfSelect(1), emfEmpty(EMRSaveDC), emfSelect(nullPen), emfDelete(1), emfExtPen(1, 0x10000, 8, magenta), emfValue(EMRRestoreDC, -1), emfSelect(nullBrush), emfPoints(EMRPolyline, 10, 30, 86, 30)),
 			probes: []probe{{48, 27, cWhite}, {48, 33, cWhite}}, libreOffice: []probe{{48, 27, cBlue}, {48, 33, cBlue}}},
+		{name: "lo-shape-edges.emf", divergence: "EMF RoundRect, ArcTo and Pie exclude their right and bottom edges",
+			data:   sceneShapeEdges(),
+			probes: []probe{{54, 50, cBlue}, {54, 44, cBlack}, {87, 57, cBlue}, {73, 45, cWhite}, {39, 40, cBlue}, {20, 53, cBlue}}, libreOffice: []probe{{39, 40, cWhite}, {20, 53, cWhite}}},
 		{name: "lo-winding.emf", divergence: "WINDING (nonzero) polygon fill is drawn as ALTERNATE",
 			data:   emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetPolyFillMode, 2), emfPolyPolygon(EMRPolyPolygon, []int32{4, 4, 60, 4, 60, 60, 4, 60}, []int32{20, 20, 80, 20, 80, 50, 20, 50})),
 			probes: []probe{{40, 30, cBlue}, {10, 10, cBlue}, {70, 30, cBlue}}, libreOffice: []probe{{40, 30, cWhite}, {10, 10, cBlue}, {70, 30, cBlue}}},

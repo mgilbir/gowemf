@@ -15,7 +15,7 @@ func metafileImageObj(typ uint32, data []byte) []byte {
 
 // innerEMF is a 40 x 20 pixel picture with a red rectangle over (0,0)-(20,10).
 func innerEMF() []byte {
-	return emfScene(40, 20, 2, emfSelect(nullPen), emfBrush(1, 0, red), emfSelect(1), emfBox(EMRRectangle, 0, 0, 21, 11))
+	return emfScene(40, 20, 2, emfSelect(nullPen), emfBrush(1, 0, red), emfSelect(1), emfBox(EMRRectangle, 0, 0, 20, 10))
 }
 
 func drawImage(id uint16, src, dst [4]float64) []byte {
@@ -28,7 +28,7 @@ func TestPlayEMFPlusMetafileImage(t *testing.T) {
 	for _, c := range []struct {
 		name     string
 		src, dst [4]float64
-		fill     []Point // the red rectangle, its right and bottom edges excluded
+		fill     []Point // the red rectangle
 		area     []Point // the source rectangle's image
 	}{
 		// The 40 x 20 pixel frame fills a 41 x 21 pixel image, as in GDI+.

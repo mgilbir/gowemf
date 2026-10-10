@@ -204,11 +204,14 @@ each GDI family:
 Interpretations where the specifications leave room or conflict:
 
 - EMF records no graphics mode. A non-identity world transform implies
-  GM_ADVANCED, because GDI records world transforms only in that mode; otherwise
-  GM_COMPATIBLE applies. Under GM_COMPATIBLE, bounding-rectangle shapes are built
-  in device space with the right and bottom edges excluded and the arc direction
-  unreflected (MS-EMF 2.1.16); under GM_ADVANCED they are built in world space
-  with edges included. WMF is always GM_COMPATIBLE.
+  GM_ADVANCED, because GDI records world transforms only in that mode;
+  otherwise GM_COMPATIBLE applies. WMF is always GM_COMPATIBLE. MS-EMF 2.1.16
+  builds GM_COMPATIBLE bounding-rectangle shapes in device space with the
+  right and bottom edges excluded and the arc direction unreflected, and
+  GM_ADVANCED shapes in world space with the edges included. Windows' EMF
+  playback builds every EMF shape the GM_ADVANCED way, so a page mapping
+  that reflects one axis reverses the displayed arc direction; WMF playback
+  keeps the GM_COMPATIBLE rules. Play follows Windows (ORACLES.md).
 - LogPen widths are logical units scaled by the logical x-axis (MS-WMF 3.1.4.2)
   and are round in device space under GM_COMPATIBLE; geometric pens follow the
   full world transform under GM_ADVANCED. MS-EMF 2.2.19's statement that

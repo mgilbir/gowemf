@@ -193,10 +193,12 @@ const (
 )
 
 // boxSpace is where GDI constructs bounding-rectangle shapes. Under
-// GM_COMPATIBLE that is device space: the arc direction is not reflected by
-// the transform, and bottom/right edges are excluded (MS-EMF 2.1.16). Under
-// GM_ADVANCED it is world space, where arcs follow the arc direction and the
-// edges are included.
+// GM_COMPATIBLE that is device space: the right and bottom edges are excluded
+// and the arc direction is not reflected by the transform (MS-EMF 2.1.16).
+// Under GM_ADVANCED it is world space, where the edges are included and a
+// reflection reverses the displayed arc direction. Windows constructs EMF
+// shapes as under GM_ADVANCED even with an identity world transform
+// (ORACLES.md), so only WMF uses GM_COMPATIBLE here.
 type boxSpace struct {
 	s          shape  // box space to destination
 	toBox      Matrix // logical to box space
@@ -204,10 +206,10 @@ type boxSpace struct {
 }
 
 func (p *player) boxSpace(b *pathBuilder, m Matrix) boxSpace {
-	if p.advanced() {
+	if p.format == EMF {
 		return boxSpace{shape{b, m}, Identity(), false}
 	}
-	// World is the identity, so m is the page mapping followed by base.
+	// WMF has no world transform, so m is the page mapping followed by base.
 	return boxSpace{shape{b, p.base}, p.dc.pageMatrix(), true}
 }
 

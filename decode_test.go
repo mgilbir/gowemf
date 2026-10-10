@@ -526,3 +526,44 @@ func BenchmarkDecodeLargePolygonView(b *testing.B) {
 		}
 	}
 }
+
+func wmfEscape(function uint16, data []byte) Record {
+	return testRecord(WMF, MetaEscape, 0, cat(words(int16(function), int16(len(data))), data))
+}
+
+// TestWMFEscapes checks META_ESCAPE records other than embedded EMF fragments
+// (MS-WMF 2.3.6.1): MFCOMMENT private comments and every MetafileEscapes
+// function decode to their data; functions outside the enumeration do not.
+func TestWMFEscapes(t *testing.T) {
+	for _, data := range [][]byte{
+		[]byte("MathType!MTEF"), {0xff, 0xff, 0xff, 0xff}, {}, {'W'},
+		cat(longs(0x43464d57, 2), make([]byte, 30)), // WMFC, but not CommentType 1
+	} {
+		v := mustDecode(t, wmfEscape(15, data))
+		if e, ok := v.(WMFEscape); !ok || e.Function != 15 || !bytes.Equal(e.Data, data) {
+			t.Fatalf("comment %q: %#v", data, v)
+		}
+	}
+	for function := range wmfEscapeFunctions {
+		if function == 15 {
+			continue
+		}
+		v := mustDecode(t, wmfEscape(function, []byte{1, 0, 2}))
+		if e, ok := v.(WMFEscape); !ok || e.Function != function || !bytes.Equal(e.Data, []byte{1, 0, 2}) {
+			t.Fatalf("escape %#x: %#v", function, v)
+		}
+	}
+	if len(wmfEscapeFunctions) != 60 {
+		t.Fatal("MetafileEscapes has 60 values:", len(wmfEscapeFunctions))
+	}
+	for _, function := range []uint16{0, 0x24, 0x27, 0x101, 0x11d9, 0xffff} {
+		if _, err := Decode(wmfEscape(function, nil), DecodeLimits{}); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("escape %#x: %v", function, err)
+		}
+	}
+	r := wmfEscape(38, []byte{1, 0})
+	put16(r.Raw, 8, 5) // ByteCount past the record
+	if _, err := Decode(r, DecodeLimits{}); !errors.Is(err, ErrMalformed) {
+		t.Fatal("escape data past the record", err)
+	}
+}

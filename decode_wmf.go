@@ -254,19 +254,51 @@ type WMFEnhancedMetafile struct {
 	Data                           []byte
 }
 
+// WMFEscape is any other META_ESCAPE record (MS-WMF 2.3.6.1): a printer-driver
+// function from the MetafileEscapes enumeration (2.1.1.17) with its EscapeData,
+// or an MFCOMMENT (function 15) private comment. Escapes do not draw on a
+// display device, so playback ignores them.
+type WMFEscape struct {
+	Function uint16
+	Data     []byte
+}
+
+// wmfEscapeFunctions holds the MetafileEscapes enumeration (MS-WMF 2.1.1.17).
+var wmfEscapeFunctions = map[uint16]bool{
+	0x0001: true, 0x0002: true, 0x0003: true, 0x0004: true, 0x0005: true, 0x0006: true,
+	0x0007: true, 0x0008: true, 0x0009: true, 0x000a: true, 0x000b: true, 0x000c: true,
+	0x000d: true, 0x000e: true, 0x000f: true, 0x0010: true, 0x0011: true, 0x0012: true,
+	0x0013: true, 0x0014: true, 0x0015: true, 0x0016: true, 0x0017: true, 0x0018: true,
+	0x0019: true, 0x001a: true, 0x001b: true, 0x001c: true, 0x001d: true, 0x001e: true,
+	0x001f: true, 0x0020: true, 0x0021: true, 0x0022: true, 0x0023: true, 0x0025: true,
+	0x0026: true, 0x002a: true, 0x0100: true, 0x0102: true, 0x0200: true, 0x0201: true,
+	0x0202: true, 0x0801: true, 0x0c01: true, 0x1000: true, 0x1001: true, 0x1002: true,
+	0x100e: true, 0x100f: true, 0x1010: true, 0x1013: true, 0x1014: true, 0x1015: true,
+	0x1016: true, 0x1017: true, 0x1018: true, 0x1019: true, 0x101a: true, 0x11d8: true,
+}
+
+// isWMFCFragment reports whether escape data is a META_ESCAPE_ENHANCED_METAFILE
+// fragment: an MFCOMMENT whose CommentIdentifier is WMFC and CommentType is 1
+// (MS-WMF 2.3.6.25). Every other MFCOMMENT is a private comment.
+func isWMFCFragment(function uint16, data []byte) bool {
+	return function == 15 && len(data) >= 8 && u32(data) == 0x43464d57 && u32(data[4:]) == 1
+}
+
 func (c *cursor) wmfEscape() any {
 	function, count := c.word(), uint64(c.word())
-	if function != 15 {
+	if !wmfEscapeFunctions[function] {
 		return c.unsupported()
 	}
 	raw := c.take(count)
 	if c.err != nil {
 		return nil
 	}
-	q := cursor{b: raw, base: c.base + c.pos - len(raw), limits: c.limits}
-	if q.dword() != 0x43464d57 || q.dword() != 1 {
-		q.bad("WMFC enhanced-metafile identifier")
+	if !isWMFCFragment(function, raw) {
+		return WMFEscape{Function: function, Data: raw}
 	}
+	q := cursor{b: raw, base: c.base + c.pos - len(raw), limits: c.limits}
+	q.dword()
+	q.dword()
 	f := WMFEnhancedMetafile{Version: q.dword(), Checksum: q.word()}
 	if q.dword() != 0 {
 		q.bad("WMFC flags")

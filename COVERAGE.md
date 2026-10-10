@@ -28,13 +28,17 @@ record definitions. The full wire value remains in `Record.Type`.
 | `33`, `40`, `41`, `43` | SetDIBToDev, DIBBitBlt, DIBStretchBlt, StretchDIB; source/no-source forms, scan metadata, ROP and packed DIB |
 | `1d`, `42` | Pattern blit and packed DIB/Bitmap16 pattern-brush creation |
 | `26` with escape `000f` | WMFC enhanced-metafile fragment envelopes: counts, lengths, remaining bytes, version and checksum value |
+| `26`, other escapes | Private MFCOMMENT comments and every other MetafileEscapes function: function and bounded escape data |
 | `19`, `48`, `28`, `29` | Flood/extended flood fill, region fill and frame |
 | `f7`, `36`, `37`, `39` | Palette creation, animation, entry updates and resizing |
 | `ff` | Region objects, including bounded scan arrays and mirrored count checks |
 | `f9`, `22`, `23` | Legacy pattern-brush and Bitmap16 BitBlt/StretchBlt layouts, checked row sizes and pixel spans |
 
-Core WMF record families are decoded; escape subtypes other than enhanced-metafile
-fragments remain unsupported. Pixel colors in device-dependent Bitmap16 data are
+Core WMF record families are decoded. META_ESCAPE function 15 is an embedded-EMF
+fragment only when its CommentIdentifier is WMFC and its CommentType is 1
+(MS-WMF 2.3.6.25); any other MFCOMMENT is a private comment, such as MathType's.
+Other escape functions keep their data untyped; functions outside the
+MetafileEscapes enumeration (2.1.1.17) are unsupported. Pixel colors in device-dependent Bitmap16 data are
 not guessed from the host platform. Palette entries retain their RGBA-independent
 wire layout (red, green, blue, usage flags).
 The significant high function bytes of BitBlt/StretchBlt and DIBBitBlt/DIBStretchBlt are checked rather
@@ -187,7 +191,7 @@ each GDI family:
 
 | Family | Played | Reported as unsupported |
 | --- | --- | --- |
-| State | SaveDC/RestoreDC (relative and WMF absolute), map modes 1–8, window/viewport origin/extent/offset/scale, Set/ModifyWorldTransform (all four modes), background mode/color, poly-fill mode, ROP2, stretch mode, arc direction, miter limit, brush origin, current position | Right-to-left layout; ICM conversion with a non-sRGB source, output profile or proofing target |
+| State | WMF escapes and comments, which do not draw on a display device; SaveDC/RestoreDC (relative and WMF absolute), map modes 1–8, window/viewport origin/extent/offset/scale, Set/ModifyWorldTransform (all four modes), background mode/color, poly-fill mode, ROP2, stretch mode, arc direction, miter limit, brush origin, current position | Right-to-left layout; ICM conversion with a non-sRGB source, output profile or proofing target |
 | Objects | Pens (LogPen and ExtCreatePen styles, caps, joins, user dashes, hatched pen brushes), solid/null/hatch, DIB and monochrome pattern brushes (EMR_CREATEMONOBRUSH and 1-bit Bitmap16 patterns), stock objects including DC_PEN/DC_BRUSH defaults, logical palettes (create, select, set, animate, resize) with PALETTEINDEX and PALETTERGB colors and DIB_PAL_COLORS bitmaps, WMF lowest-free-slot reuse, EMF handle reuse | Colored Bitmap16 patterns, DIB pattern pens, dithered hatch styles, DIB_PAL_INDICES bitmaps, palettes after EMR_COLORCORRECTPALETTE, PALETTEINDEX with the default palette |
 | Geometry | Polygons/polylines/polypolygons/polypolylines (16/32-bit), Bézier and "To" forms, PolyDraw, LineTo/MoveTo, Rectangle, RoundRect, Ellipse, Arc/ArcTo/Chord/Pie, AngleArc, SetPixel | — |
 | Paths | Begin/End/Abort, CloseFigure, FlattenPath, FillPath, StrokePath, StrokeAndFillPath, SelectClipPath | WidenPath; text inside a path bracket |

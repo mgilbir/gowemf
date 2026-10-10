@@ -625,3 +625,21 @@ func FuzzPlay(f *testing.F) {
 		}
 	})
 }
+
+// TestPlayWMFEscapes plays a rectangle after each kind of META_ESCAPE that is
+// not an embedded EMF fragment. Escapes are printer-driver functions or
+// comments and do not draw on a display device.
+func TestPlayWMFEscapes(t *testing.T) {
+	escapes := []Record{wmfEscape(15, []byte("Example private comment data")), wmfEscape(15, []byte{0xff, 0xff, 0xff, 0xff, 1})}
+	for function := range wmfEscapeFunctions {
+		if function != 15 {
+			escapes = append(escapes, wmfEscape(function, []byte{1, 0}))
+		}
+	}
+	for _, e := range escapes {
+		b := record(t, wmfScene(100, 100, 1, e, wmfBrush(0, 0x0000ff, 0), wmfRec(MetaSelectObject, 0), wmfBox(MetaRectangle, 10, 10, 90, 90)), PlayOptions{})
+		if len(b.fills) != 1 {
+			t.Fatalf("escape %x: %d fills", e.Raw[6:8], len(b.fills))
+		}
+	}
+}

@@ -20,17 +20,20 @@ func ExtractEnhancedMetafile(data []byte, limits Limits) ([]byte, error) {
 	var checksum uint16
 	started, complete := false, false
 	_, err = Walk(data, l, func(r Record) error {
-		if r.Type&255 != MetaEscape&255 || len(r.Data) < 8 || u16(r.Data) != 15 || u32(r.Data[4:]) != 0x43464d57 {
+		if r.Type&255 != MetaEscape&255 || len(r.Data) < 2 || u16(r.Data) != 15 {
 			return nil
-		}
-		if complete {
-			return malformed(r.Offset, "multiple embedded EMF streams")
 		}
 		v, err := Decode(r, DecodeLimits{MaxObjectBytes: l.MaxBytes, MaxElements: l.MaxRecords})
 		if err != nil {
 			return err
 		}
-		f := v.(WMFEnhancedMetafile)
+		f, ok := v.(WMFEnhancedMetafile)
+		if !ok { // a private comment
+			return nil
+		}
+		if complete {
+			return malformed(r.Offset, "multiple embedded EMF streams")
+		}
 		if !started {
 			started = true
 			total, records, checksum = f.TotalBytes, f.Records, f.Checksum

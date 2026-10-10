@@ -18,7 +18,7 @@ explicit in [COVERAGE.md](COVERAGE.md).
 
 | Format | Implemented | Still opaque / not implemented |
 | --- | --- | --- |
-| MS-WMF | Standard/placeable framing; core drawing/state/object records; text; DIB and Bitmap16 layouts; enhanced-EMF fragment decoding and explicit checksummed extraction | Other escape subtypes; device-dependent bitmap color realization |
+| MS-WMF | Standard/placeable framing; core drawing/state/object records; text; DIB and Bitmap16 layouts; enhanced-EMF fragment decoding and explicit checksummed extraction; other escapes and private comments as untyped data | Typed layouts of printer escapes; device-dependent bitmap color realization |
 | MS-EMF | Framing/header extensions; geometry/transforms/paths; objects and extended fonts; text; regions/palettes/gradients/raster transfers; logical color spaces and saved color state | Pixel-format descriptor interpretation; driver/OpenGL extensions; halftone color-adjustment algorithms |
 | MS-EMFPLUS | Drawing/state records including terminal-server layouts; objects; all raw bitmap formats plus PNG/JPEG/GIF/TIFF; fonts/images; effect parameters with lookup/matrix playback | StrokeFillPath; remaining effect algorithms; TIFF extensions outside the documented subset |
 

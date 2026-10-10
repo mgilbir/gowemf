@@ -169,7 +169,11 @@ type Stroke struct {
 
 // ImageDraw places Source pixels from Image. Transform maps image pixel
 // coordinates (pixel x covers [x,x+1)) to destination coordinates and may
-// mirror, scale, rotate or shear. Pixels outside Source are not drawn. The
+// mirror, scale, rotate or shear. Pixels outside Source are not drawn. When a
+// record's source rectangle has fractional edges, Source is the enclosing
+// pixels, Transform maps the exact rectangle, and the Clip passed with the
+// image ends with a layer that is that rectangle in destination coordinates;
+// a backend that honors the clip draws the fractional source exactly. The
 // image is composited source-over with its alpha multiplied by Opacity.
 // Smooth is the interpolation hint: GDI's HALFTONE stretch mode, or an EMF+
 // interpolation mode other than NearestNeighbor. Image must not be modified.

@@ -45,6 +45,9 @@ func plusScenes() []renderScene {
 			data:   scenePlusCustomCap(),
 			probes: []probe{{65, 12, cBlack}, {69, 12, cWhite}, {40, 12, cBlack}}, libreOffice: []probe{{65, 12, cWhite}, {40, 12, cBlack}}},
 		{name: "plus-image.emf", data: scenePlusImage(false), probes: []probe{{16, 16, cRed}, {32, 16, cLime}, {16, 32, cBlue}, {32, 32, cYellow}, {4, 4, cWhite}, {62, 16, cRed}, {74, 32, cYellow}, {90, 40, cWhite}}},
+		{name: "plus-image-fraction.emf", data: scenePlusImageFraction(), probes: []probe{
+			{12, 12, cRed}, {26, 12, cLime}, {12, 26, cBlue}, {26, 26, cYellow}, {7, 16, cWhite}, {32, 16, cWhite}, {16, 7, cWhite}, {16, 32, cWhite},
+			{52, 12, cRed}, {68, 12, cLime}, {52, 28, cBlue}, {68, 28, cYellow}, {47, 20, cWhite}, {72, 20, cWhite}, {60, 7, cWhite}, {60, 32, cWhite}}},
 		{name: "lo-plus-nearest.emf", divergence: "InterpolationModeNearestNeighbor is ignored; scaled images are smoothed",
 			data:   scenePlusNearest(),
 			probes: []probe{{10, 10, cRed}, {22, 16, cRed}, {26, 16, cLime}, {38, 38, cYellow}}, libreOffice: []probe{{10, 10, cRed}, {22, 16, color.NRGBA{149, 103, 4, 255}}, {26, 16, color.NRGBA{90, 167, 2, 255}}}},
@@ -238,6 +241,20 @@ func scenePlusImage(raw bool) []byte {
 		plusObj(1, 5, image),
 		plusRec(PlusDrawImageRecord, 1, dwords(0xffffffff, 2), fl(0, 0, 16, 16), fl(8, 8, 32, 32)),
 		plusRec(PlusDrawImagePointsRecord, 1, dwords(0xffffffff, 2), fl(0, 0, 16, 16), dwords(3), fl(56, 8, 88, 8, 48, 40)),
+	)
+}
+
+// Source rectangles with fractional edges, scaled 3 times: (3.5, 3.5) to
+// (11.5, 11.5) of a 16x16 quadrant image onto (8, 8)-(32, 32), with the
+// quadrant boundary at 21.5, and (2.5, 2.5) to (10.5, 10.5) onto the points
+// (48, 8), (72, 8), (48, 32), with the boundary at 64.5. The whole pixels
+// enclosing the sources would reach 1.5 pixels further out on every side.
+func scenePlusImageFraction() []byte {
+	return plusScene96(
+		plusRec(PlusSetPixelOffsetModeRecord, 4),
+		plusObj(1, 5, pngQuadrants(16, cLime)),
+		plusRec(PlusDrawImageRecord, 1, dwords(0xffffffff, 2), fl(3.5, 3.5, 8, 8), fl(8, 8, 24, 24)),
+		plusRec(PlusDrawImagePointsRecord, 1, dwords(0xffffffff, 2), fl(2.5, 2.5, 8, 8), dwords(3), fl(48, 8, 72, 8, 48, 32)),
 	)
 }
 

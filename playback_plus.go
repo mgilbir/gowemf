@@ -657,9 +657,13 @@ var plusCaps = map[uint32]LineCap{0: CapFlat, 1: CapSquare, 2: CapRound, 0x10: C
 
 // plusCompound validates a compound line (MS-EMFPLUS 2.2.2.9). Which side
 // of the line fraction 0 lies on is not specified, so only arrays symmetric
-// about the center are drawn. How bands meet at bevel and round joins is not
-// specified either; with miter joins every reading agrees, provided no
-// corner exceeds the miter limit (checked against the path in plusDraw).
+// about the center are drawn. How bands meet at joins is not specified: each
+// band edge is joined like the whole pen, so a band is the stroke at its
+// outer edge minus the stroke at its inner edge. With round joins that is
+// exactly the points at the band's distances from the path, as Windows GDI+
+// draws them; with miter joins it requires every corner within the miter
+// limit (checked against the path in plusDraw), where GDI+ would bevel.
+// Bevel joins are reported.
 func (p *player) plusCompound(r Record, pen PlusPen, s *Stroke) error {
 	c := pen.Compound
 	if len(c)%2 != 0 {
@@ -676,8 +680,10 @@ func (p *player) plusCompound(r Record, pen PlusPen, s *Stroke) error {
 	switch {
 	case pen.Width == 0:
 		return p.unsupported(r, "EMF+ zero-width compound pen")
-	case pen.Join != 0:
-		return p.unsupported(r, "EMF+ compound pen with bevel or round joins")
+	case pen.Join == 1:
+		// GDI+ joins the inner sides of bevelled band edges with crossing
+		// connectors, which reach into the gaps between bands (ORACLES.md).
+		return p.unsupported(r, "EMF+ compound pen with bevel joins")
 	case pen.LineStyle != 0:
 		return p.unsupported(r, "EMF+ dashed compound pen")
 	}
@@ -686,8 +692,9 @@ func (p *player) plusCompound(r Record, pen PlusPen, s *Stroke) error {
 }
 
 // compoundDrawable reports whether a compound stroke of path is exact: open
-// figures need flat caps, and every corner must stay within the miter limit,
-// so that the bands' parallel lines are mitered like the full stroke.
+// figures need flat caps, and with miter joins every corner must stay within
+// the miter limit, so that the bands' parallel lines are mitered like the
+// full stroke.
 func compoundDrawable(path Path, s *Stroke) (string, bool) {
 	inv, ok := invertMatrix(s.Transform)
 	if !ok {
@@ -706,6 +713,9 @@ func compoundDrawable(path Path, s *Stroke) (string, bool) {
 		joins := n - 1
 		if closed {
 			joins = n
+		}
+		if s.Join != JoinMiter {
+			joins = 0
 		}
 		for i := 0; i < joins; i++ {
 			a, b := inv.Apply(figure[i].out), inv.Apply(figure[(i+1)%n].in)

@@ -432,6 +432,8 @@ func TestPlayEMFPlusPens(t *testing.T) {
 	// default limit).
 	compound := plusObj(4, 2, plusPen(2|4|1024, 0, 2, cat(dwords(2, 2), dwords(2), fl(0, 1)), red))
 	sharp := plusObj(5, 2, plusPen(1024, 0, 2, cat(dwords(2), fl(0, 1)), red))
+	// Round joins have no miter limit.
+	round := plusObj(7, 2, plusPen(8|1024, 0, 2, cat(dwords(2), dwords(2), fl(0, 1)), red))
 	lines := func(id uint16, pts ...float64) []byte {
 		return plusRec(PlusDrawLinesRecord, id, dwords(uint32(len(pts)/2)), fl(pts...))
 	}
@@ -445,6 +447,7 @@ func TestPlayEMFPlusPens(t *testing.T) {
 		// Only the corner where the figure closes is sharp.
 		{[][]byte{sharp, lines(5|0x2000, 0, 0, 20, 1, 20, 2)}, "miter limit"},
 		{[][]byte{sharp, lines(5, 0, 0, 10, 0, 10, 10), compound, lines(4|0x2000, 0, 0, 10, 0, 10, 10)}, ""},
+		{[][]byte{round, lines(7, 0, 0, 10, 0, 0, 1), lines(7|0x2000, 0, 0, 10, 0, 0, 1)}, ""},
 	} {
 		b, skipped := plusPlay(t, plusScene(96, 64, c.records...), PlayOptions{})
 		if c.reason == "" {
@@ -465,7 +468,8 @@ func TestPlayEMFPlusPens(t *testing.T) {
 		reason string
 	}{
 		{plusPen(1024, 0, 2, cat(dwords(4), fl(0, .2, .5, 1)), red), "asymmetric compound"},
-		{plusPen(8|1024, 0, 2, cat(dwords(2), dwords(2), fl(0, 1)), red), "compound pen with bevel or round"},
+		{plusPen(8|1024, 0, 2, cat(dwords(3), dwords(2), fl(0, 1)), red), "clipped miter"},
+		{plusPen(8|1024, 0, 2, cat(dwords(1), dwords(2), fl(0, 1)), red), "compound pen with bevel joins"},
 		{plusPen(32|1024, 0, 2, cat(dwords(1), dwords(2), fl(0, 1)), red), "dashed compound"},
 		{plusPen(1024, 0, 0, cat(dwords(2), fl(0, 1)), red), "zero-width compound"},
 		{plusPen(2|4, 0, 2, dwords(3, 3), red), "triangle"},

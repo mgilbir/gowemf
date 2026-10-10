@@ -335,6 +335,7 @@ LibreOffice 24.2.7.2 diverges on the rest:
 | --- | --- | --- |
 | `lo-plus-square-anchor.emf` | SquareAnchor drawn wider than the line | A square of the line width (MS-EMFPLUS 2.1.1.17) |
 | `lo-plus-compound.emf` | Compound pens drawn as one solid full-width line | Parallel bands |
+| `lo-plus-compound-joins.emf` | The same, at round and miter corners | Bands joined like the pen: round bands at their distances from the corner, as Windows GDI+ draws them |
 | `lo-plus-path-gradient.emf` | An elliptical blend that also covers the filled area outside the boundary | A center-to-boundary fan inside the boundary only |
 
 LibreOffice could not settle the custom-cap convention. A file with an

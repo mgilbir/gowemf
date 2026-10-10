@@ -458,9 +458,10 @@ func TestPlayEMFPlusPens(t *testing.T) {
 			t.Errorf("%s: %v", c.reason, skipped)
 		}
 	}
-	// A pen brush may be a hatch, which the rendering origin anchors.
+	// A pen brush may be a hatch, GDI+'s pattern from the rendering origin.
 	s, _ = stroke(t, plusPen(0, 0, 1, nil, hatchBrush(4, 0xff000000, 0x80ffffff)), plusRec(PlusSetRenderingOriginRecord, 0, longs(3, 4)))
-	if s.Paint.Kind != PaintHatch || s.Paint.Hatch != 4 || *s.Paint.Background != (color.NRGBA{255, 255, 255, 128}) || s.Paint.PatternTransform != (Matrix{M11: 1, M22: 1, Dx: 3, Dy: 4}) {
+	if s.Paint.Kind != PaintPattern || s.Paint.Wrap != WrapTile || s.Paint.PatternTransform != (Matrix{M11: 1, M22: 1, Dx: 3, Dy: 4}) ||
+		color.NRGBAModel.Convert(s.Paint.Pattern.At(0, 0)) != (color.NRGBA{0, 0, 0, 255}) || color.NRGBAModel.Convert(s.Paint.Pattern.At(1, 1)) != (color.NRGBA{255, 255, 255, 128}) {
 		t.Fatalf("hatch pen %+v", s.Paint)
 	}
 	for _, c := range []struct {
@@ -484,7 +485,8 @@ func TestPlayEMFPlusPens(t *testing.T) {
 		{plusPen(0, 4, 2, nil, red), "unit"},
 		{plusPen(1, 2, 2, fl(2, 0, 0, 2, 0, 0), red), "Pixel-unit pen"},
 		{plusPen(0, 0, 2, nil, dwords(plusVersion, 3, 0, 0, 0xff000000, 0, 0, 0, 0)), "path gradient"},
-		{plusPen(0, 0, 2, nil, hatchBrush(6, 0xff000000, 0xffffffff)), "hatch style 6"},
+		{plusPen(0, 0, 2, nil, hatchBrush(53, 0xff000000, 0xffffffff)), "hatch style 53"},
+		{plusPen(0, 0, 2, nil, hatchBrush(2, 0x80000000, 0xffffffff)), "translucent anti-aliased hatch"},
 	} {
 		if _, skipped := stroke(t, c.pen); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
 			t.Errorf("%s: %v", c.reason, skipped)
@@ -1150,5 +1152,63 @@ func TestPlayEMFPlusCustomCaps(t *testing.T) {
 		if _, skipped := play(t, on, c.records...); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
 			t.Errorf("%s: %v", c.reason, skipped)
 		}
+	}
+}
+
+// TestPlusHatchPatterns checks the GDI+ hatch table against the patterns
+// MS-EMFPLUS 2.1.1.13 shares with GDI and its own descriptions, and the
+// blending of an anti-aliased pixel (Windows drew 233,0,21 for red on blue).
+func TestPlusHatchPatterns(t *testing.T) {
+	bits := func(style int) (rows [8]string) {
+		for y := 0; y < 8; y++ {
+			for x := 0; x < 8; x++ {
+				if plusHatchCoverage[style][y][x] >= 128 {
+					rows[y] += "1"
+				} else {
+					rows[y] += "0"
+				}
+			}
+		}
+		return
+	}
+	for style, want := range map[int][8]string{
+		0:  {"11111111", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"}, // Horizontal
+		1:  {"10000000", "10000000", "10000000", "10000000", "10000000", "10000000", "10000000", "10000000"}, // Vertical
+		2:  {"10000000", "01000000", "00100000", "00010000", "00001000", "00000100", "00000010", "00000001"}, // ForwardDiagonal
+		4:  {"11111111", "10000000", "10000000", "10000000", "10000000", "10000000", "10000000", "10000000"}, // Cross
+		12: {"10101010", "01010101", "10101010", "01010101", "10101010", "01010101", "10101010", "01010101"}, // 50 percent
+	} {
+		if bits(style) != want {
+			t.Errorf("style %d: %v", style, bits(style))
+		}
+	}
+	// "A 5-percent hatch": 2 to 4 of the 64 pixels. GDI+'s 90-percent hatch
+	// covers 62.
+	count := func(style int) (n int) {
+		for _, row := range bits(style) {
+			n += strings.Count(row, "1")
+		}
+		return
+	}
+	for style, want := range map[int][2]int{6: {2, 4}, 9: {14, 18}, 12: {32, 32}, 17: {62, 62}} {
+		if n := count(style); n < want[0] || n > want[1] {
+			t.Errorf("style %d covers %d of 64", style, n)
+		}
+	}
+	for style := range plusHatchCoverage {
+		for _, row := range plusHatchCoverage[style] {
+			for _, c := range row {
+				if c != 0 && c != 255 && style != 2 && style != 3 && style != 5 {
+					t.Fatalf("style %d has partial coverage %d", style, c)
+				}
+			}
+		}
+	}
+	b, skipped := plusPlay(t, plusScene(96, 64, plusObj(1, 1, hatchBrush(2, 0xffff0000, 0xff0000ff)), plusRec(PlusFillRectsRecord, 0, dwords(1, 1), fl(0, 0, 8, 8))), PlayOptions{})
+	if len(skipped) != 0 {
+		t.Fatal(skipped)
+	}
+	if c := color.NRGBAModel.Convert(b.fills[0].paint.Pattern.At(0, 0)).(color.NRGBA); c.R < 232 || c.R > 235 || c.B < 20 || c.B > 23 || c.A != 255 {
+		t.Fatal("anti-aliased pixel", c)
 	}
 }

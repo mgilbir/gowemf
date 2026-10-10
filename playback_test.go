@@ -643,3 +643,50 @@ func TestPlayWMFEscapes(t *testing.T) {
 		}
 	}
 }
+
+// TestPlayEMFMicrometers places a 100 x 100 pixel picture on a 96 DPI
+// reference device (794 x 1123 pixels, 210 x 297 mm) whose header carries
+// szlMicrometers. The frame converts with szlMillimeters whatever
+// szlMicrometers says, as Windows GDI and GDI+ do.
+func TestPlayEMFMicrometers(t *testing.T) {
+	scene := func(um *Size) []byte {
+		b := emfFixture(emfRecord(EMRSelectObject, longs(-0x7ffffff8)), emfBox(EMRRectangle, 0, 0, 50, 50)) // NULL_PEN
+		copy(b[8:], longs(0, 0, 99, 99, 0, 0, 2646, 2646))
+		copy(b[72:], longs(794, 1123, 210, 297))
+		if um != nil {
+			header := cat(b[:88], longs(0, 0, 0, um.X, um.Y))
+			put32(header, 4, 108)
+			b = append(header, b[88:]...)
+			put32(b, 48, uint32(len(b)))
+		}
+		return b
+	}
+	// Under GM_COMPATIBLE the rectangle ends one device pixel short.
+	right := func(mmX float64) float64 { return 49 * 100 / (26.46 / (mmX / 794)) }
+	bottom := func(mmY float64) float64 { return 49 * 100 / (26.46 / (mmY / 1123)) }
+	for _, c := range []struct {
+		um       *Size
+		mmX, mmY float64 // the size used
+	}{
+		{nil, 210, 297},
+		{&Size{210000, 297000}, 210, 297},
+		{&Size{210900, 297100}, 210, 297},
+		{&Size{209100, 296001}, 210, 297},
+		{&Size{344000, 194000}, 210, 297},
+		{&Size{210000, 194000}, 210, 297},
+		{&Size{211000, 297000}, 210, 297},
+		{&Size{7929939, 7602291}, 210, 297},
+	} {
+		b := record(t, scene(c.um), PlayOptions{Destination: Box{Width: 100, Height: 100}})
+		if len(b.fills) != 1 {
+			t.Fatal(c.um, b.fills)
+		}
+		var maxX, maxY float64
+		for _, p := range b.fills[0].path.Points {
+			maxX, maxY = math.Max(maxX, p.X), math.Max(maxY, p.Y)
+		}
+		if math.Abs(maxX-right(c.mmX)) > 1e-9 || math.Abs(maxY-bottom(c.mmY)) > 1e-9 {
+			t.Fatalf("%v: rectangle ends at (%v, %v), want (%v, %v)", c.um, maxX, maxY, right(c.mmX), bottom(c.mmY))
+		}
+	}
+}

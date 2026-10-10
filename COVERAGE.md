@@ -227,7 +227,12 @@ Interpretations where the specifications leave room or conflict:
   window and the destination is the viewport (MS-WMF 3.1.3); records may then
   replace either. Fixed mapping modes use the resolution those bounds imply.
   EMF device units are reference-device pixels mapped onto the destination by
-  the header frame (or the inclusive bounds when the frame is empty).
+  the header frame (or the inclusive bounds when the frame is empty). The
+  pixel size is szlMillimeters over szlDevice. MS-EMF 2.2.11 does not say
+  whether szlMicrometers takes precedence; Windows GDI and GDI+ ignore it,
+  placing a picture by szlMillimeters even where szlMicrometers refines it by
+  0.3% (ORACLES.md), and writers also store values in it that are not the
+  device size.
 - ExtSelectClipRgn regions are logical units, as MS-EMF 2.3.2.2 specifies. The
   "no effect" rule for bitmap records whose Bounds miss the clip is not applied;
   the drawing itself is clipped.

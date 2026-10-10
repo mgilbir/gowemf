@@ -1008,8 +1008,8 @@ func TestPlayEMFPlusPathGradient(t *testing.T) {
 		reason string
 	}{
 		{pathGradientBrush(0, 4, red, 20, 20, []uint32{blue}, nil, []float64{0, 0, 40, 0, 40, 40}), "point (cardinal spline) boundary"},
-		{pathGradientBrush(1|8, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, 1, 0, 1)), "blend factors"},
-		{pathGradientBrush(1|4, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, 1), dwords(red, blue)), "preset colors"},
+		{pathGradientBrush(1|8, 4, red, 20, 20, []uint32{blue, blue, red, red}, square, nil, dwords(2), fl(0, 1, 0, 1)), "blend factors with several surrounding colors"},
+		{pathGradientBrush(1|4, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, 1), dwords(red, 0x800000ff)), "varying alpha"},
 		{pathGradientBrush(1|0x40, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(.5, .5)), "focus scales"},
 		{pathGradientBrush(1|0x80, 4, red, 20, 20, []uint32{blue}, square, nil), "gamma"},
 		{pathGradientBrush(1, 0, red, 20, 20, []uint32{blue}, square, nil), "tiled"},
@@ -1027,6 +1027,46 @@ func TestPlayEMFPlusPathGradient(t *testing.T) {
 		if _, skipped := play(t, c.brush); len(skipped) != 1 || !strings.Contains(skipped[0], c.reason) {
 			t.Errorf("%s: %v", c.reason, skipped)
 		}
+	}
+	// Blend factors and preset colors: position 0 is the boundary and 1 the
+	// center (GDI+ PathGradientBrush::SetBlend, SetInterpolationColors).
+	// Each fan triangle splits into bands at the positions.
+	factors := pathGradientBrush(1|8, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(3), fl(0, .5, 1, 0, .8, 1))
+	b, skipped = play(t, factors)
+	if len(skipped) != 0 || len(b.meshes[0]) != 12 {
+		t.Fatal(skipped, len(b.meshes[0]))
+	}
+	c80 := color.NRGBA64{204 * 257, 0, 51 * 257, 0xffff}
+	if tri := b.meshes[0][0]; tri.Points != [3]Point{{0, 0}, {40, 0}, {30, 10}} || tri.Colors != [3]color.NRGBA64{{0, 0, 0xffff, 0xffff}, {0, 0, 0xffff, 0xffff}, c80} {
+		t.Fatalf("band %+v", tri)
+	}
+	if tri := b.meshes[0][2]; tri.Points != [3]Point{{10, 10}, {30, 10}, {20, 20}} || tri.Colors != [3]color.NRGBA64{c80, c80, {0xffff, 0, 0, 0xffff}} {
+		t.Fatalf("inner band %+v", tri)
+	}
+	presets := pathGradientBrush(1|4, 4, red, 20, 20, []uint32{red, red, blue, blue}, square, nil, dwords(3), fl(0, .5, 1), dwords(blue, 0xff00ff00, red))
+	for name, c := range map[string]struct {
+		brush []byte
+		want  color.NRGBA
+	}{
+		// Pixel (5,19) is 5.5 of 20 units from the boundary toward the
+		// center: position 0.275, factor 0.44; or 55% from blue to green.
+		"factors": {factors, color.NRGBA{112, 0, 143, 255}},
+		"presets": {presets, color.NRGBA{0, 140, 115, 255}},
+	} {
+		rb := newRasterBackend(96, 64)
+		if _, err := Play(plusScene(96, 64, half, plusObj(1, 1, c.brush), fill), PlayOptions{Destination: Box{Width: 96, Height: 64}}, rb); err != nil {
+			t.Fatal(name, err)
+		}
+		got := rb.canvas.NRGBAAt(5, 19)
+		for _, d := range [3]float64{float64(got.R) - float64(c.want.R), float64(got.G) - float64(c.want.G), float64(got.B) - float64(c.want.B)} {
+			if math.Abs(d) > 2 {
+				t.Errorf("%s: %v, want %v", name, got, c.want)
+			}
+		}
+	}
+	badEnds := pathGradientBrush(1|4, 4, red, 20, 20, []uint32{blue}, square, nil, dwords(2), fl(0, .5), dwords(red, blue))
+	if _, err := Play(plusScene(96, 64, plusObj(1, 1, badEnds), fill), PlayOptions{Destination: Box{Width: 96, Height: 64}}, &meshRecorder{}); !errors.Is(err, ErrMalformed) {
+		t.Fatal("preset endpoints", err)
 	}
 	// Mesh triangles share the playback budget.
 	data = plusScene(96, 64, half, plusObj(1, 1, pathGradientBrush(1, 4, red, 20, 20, []uint32{blue}, square, nil)), fill)

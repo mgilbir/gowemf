@@ -590,7 +590,7 @@ func (p *player) arcTo(c Command, v Arc) error {
 	b := p.target()
 	p.startFigure(shape{b, m})
 	bs := p.boxSpace(b, m)
-	end := p.closedShape(bs, shapeArcTo, v.Rect, Point{}, v.Start, v.End, 0)
+	end := p.closedShape(bs, shapeArcTo, v.Rect, Point{}, v.Start, v.End, Point{})
 	// The box-space mapping is an invertible axis-aligned scale or identity.
 	inv := bs.toBox
 	p.dc.position = Point{(end.X - inv.Dx) / inv.M11, (end.Y - inv.Dy) / inv.M22}
@@ -630,10 +630,10 @@ func (p *player) drawShape(c Command, kind int, box Rect, corner, start, end Poi
 	}
 	b := p.target()
 	bs := p.boxSpace(b, m)
-	var inset float64
+	var inset Point
 	if pen := p.dc.pen.pen; pen != nil && !pen.null && pen.geometric && pen.style == 6 {
-		// The compatible-mode pen is round in device space with an x-scaled width.
-		inset = pen.width * math.Abs(bs.toBox.M11)
+		// The pen is transformed with the box space's axes.
+		inset = Point{pen.width * math.Abs(bs.toBox.M11), pen.width * math.Abs(bs.toBox.M22)}
 	}
 	p.closedShape(bs, kind, box, corner, start, end, inset)
 	// Arc leaves its figure open but does not update the current position.
@@ -869,9 +869,10 @@ func (p *player) brushPaint(r Record, g *gdiBrush, m Matrix, applyROP2 bool) (*P
 	return p.rop2(r, paint)
 }
 
-// stroke resolves the selected pen. Under GM_COMPATIBLE the pen is round in
-// device space with its width scaled by the logical x-axis (MS-WMF 3.1.4.2);
-// under GM_ADVANCED the pen is transformed with the world.
+// stroke resolves the selected pen. A geometric pen is a circle of its
+// width in logical units, transformed with the world and page mapping: an
+// anisotropic mapping draws it as an ellipse, as Windows does in EMF and WMF
+// (ORACLES.md).
 func (p *player) stroke(r Record, m Matrix) (*Stroke, error) {
 	g := p.dc.pen.pen
 	if g == nil || g.null {
@@ -913,14 +914,9 @@ func (p *player) stroke(r Record, m Matrix) (*Stroke, error) {
 	switch {
 	case !g.geometric || g.width <= 0:
 		s.Hairline = true
-	case p.advanced():
-		s.Width = g.width
-		s.Transform = Matrix{M11: m.M11, M12: m.M12, M21: m.M21, M22: m.M22}
 	default:
-		s.Width = g.width * math.Hypot(m.M11, m.M12)
-		for i := range s.Dashes {
-			s.Dashes[i] *= math.Hypot(m.M11, m.M12)
-		}
+		s.Width = g.width
+		s.Transform = linear(m)
 	}
 	if !finite(s.Width) {
 		return nil, malformed(r.Offset, "non-finite pen width")

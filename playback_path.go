@@ -214,8 +214,9 @@ func (p *player) boxSpace(b *pathBuilder, m Matrix) boxSpace {
 }
 
 // closedShape appends a bounding-rectangle figure and returns its end point
-// in box space. inset is the pen width for PS_INSIDEFRAME, in box units.
-func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end Point, inset float64) Point {
+// in box space. inset is the pen width along each axis for PS_INSIDEFRAME,
+// in box units.
+func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end Point, inset Point) Point {
 	s := bs.s
 	c0 := bs.toBox.Apply(Point{float64(box.Left), float64(box.Top)})
 	c1 := bs.toBox.Apply(Point{float64(box.Right), float64(box.Bottom)})
@@ -224,7 +225,7 @@ func (p *player) closedShape(bs boxSpace, kind int, box Rect, corner, start, end
 	if bs.compatible {
 		r, b = r-1, b-1
 	}
-	l, t, r, b = l+inset/2, t+inset/2, r-inset/2, b-inset/2
+	l, t, r, b = l+inset.X/2, t+inset.Y/2, r-inset.X/2, b-inset.Y/2
 	if l > r {
 		l, r = (l+r)/2, (l+r)/2
 	}

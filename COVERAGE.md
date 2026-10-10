@@ -213,12 +213,14 @@ Interpretations where the specifications leave room or conflict:
   playback builds every EMF shape the GM_ADVANCED way, so a page mapping
   that reflects one axis reverses the displayed arc direction; WMF playback
   keeps the GM_COMPATIBLE rules. Play follows Windows (ORACLES.md).
-- LogPen widths are logical units scaled by the logical x-axis (MS-WMF 3.1.4.2)
-  and are round in device space under GM_COMPATIBLE; geometric pens follow the
-  full world transform under GM_ADVANCED. MS-EMF 2.2.19's statement that
-  non-geometric LogPen widths are device units conflicts with its own MUST that
-  they be 1, and with the GDI call EMR_CREATEPEN records. A zero width is a
-  hairline, as are cosmetic extended pens.
+- LogPen and geometric extended pen widths are logical units. A pen is a
+  circle of that width transformed with the world and page mapping, so an
+  anisotropic mapping draws it as an ellipse in EMF and WMF alike, as
+  Windows does (ORACLES.md); MS-WMF 3.1.4.2's width scaled by the logical
+  x-axis agrees whenever both axes scale equally. MS-EMF 2.2.19's statement
+  that non-geometric LogPen widths are device units conflicts with its own
+  MUST that they be 1, and with the GDI call EMR_CREATEPEN records. A zero
+  width is a hairline, as are cosmetic extended pens.
 - Deleting a selected object activates the default stock object (MS-EMF
   3.1.1.1). The same rule applies to WMF, whose specification releases the
   object's resources on deletion. A selection held by a saved state, logical

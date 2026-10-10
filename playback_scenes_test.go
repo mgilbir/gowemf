@@ -252,7 +252,7 @@ const nullPen, blackBrush, nullBrush = 0x80000008, 0x80000004, 0x80000005
 func agreementScenes() []renderScene {
 	return []renderScene{
 		{name: "transforms.emf", data: sceneTransforms(), probes: []probe{{31, 17, cRed}, {54, 58, cBlue}, {50, 30, cGreen}, {66, 28, cRed}, {86, 54, cBlack}, {91, 59, cBlack}, {92, 54, cWhite}, {86, 60, cWhite}, {2, 60, cWhite}}},
-		{name: "mapping.emf", data: sceneMapping(), probes: []probe{{20, 20, cRed}, {44, 20, cWhite}, {37, 8, cBlue}, {64, 10, cWhite}, {80, 10, cGreen}, {64, 22, cGreen}, {80, 22, cGreen}, {24, 50, cRed}, {50, 50, cWhite}, {66, 46, cBlue}, {60, 51, cBlack}, {60, 56, cBlue}, {86, 46, cGreen}}},
+		{name: "mapping.emf", data: sceneMapping(), probes: []probe{{20, 20, cRed}, {44, 20, cWhite}, {37, 8, cBlue}, {64, 10, cWhite}, {80, 10, cGreen}, {64, 22, cGreen}, {80, 22, cGreen}, {24, 50, cRed}, {50, 50, cWhite}, {66, 46, cBlue}, {60, 52, cBlack}, {60, 54, cBlue}, {60, 56, cBlue}, {86, 46, cGreen}}},
 		{name: "objects.emf", data: sceneObjects(), probes: []probe{{17, 17, cRed}, {6, 17, cBlue}, {2, 17, cWhite}, {49, 17, cOrange}, {80, 17, cRed}, {17, 48, cBlack}, {49, 46, cWhite}, {49, 55, cMagenta}, {80, 48, cRed}, {70, 48, cBlue}}},
 		{name: "clip.emf", data: sceneClip(), probes: []probe{{20, 14, qRed}, {72, 14, qGreen}, {20, 48, qBlue}, {72, 48, qYellow}, {3, 30, cWhite}, {7, 8, cWhite}, {20, 30, cBlue}, {48, 30, qGreen}, {8, 4, cOrange}, {1, 4, cWhite}}},
 		{name: "paths.emf", data: scenePaths(), probes: []probe{{8, 8, cRed}, {20, 20, cWhite}, {33, 33, cRed}, {55, 20, cRed}, {70, 20, cWhite}, {24, 50, cBlue}, {24, 63, cWhite}}},
@@ -596,6 +596,10 @@ func divergenceScenes() []renderScene {
 		{name: "lo-stretchdib-partial.wmf", divergence: "partial WMF StretchDIB sources are measured from the top of the image",
 			data:   sceneStretchDIBPartial(true),
 			probes: []probe{{12, 12, qBlue}, {28, 12, qYellow}, {52, 12, qRed}, {68, 12, qGreen}}, libreOffice: []probe{{12, 12, qRed}, {52, 12, qBlue}}},
+		{name: "lo-pen-aniso.emf", divergence: "pens under an anisotropic page mapping are round with the x-scaled width",
+			data: emfScene(96, 64, 4, emfExtPen(1, 0x10000|0x200, 16, blue), emfSelect(1), emfValue(EMRSetMapMode, 8), emfPoint(EMRSetWindowExtEx, 100, 100), emfPoint(EMRSetViewportExtEx, 100, 25),
+				emfPoints(EMRPolyline, 10, 128, 86, 128)),
+			probes: []probe{{48, 32, cBlue}, {48, 26, cWhite}, {48, 38, cWhite}}, libreOffice: []probe{{48, 32, cBlue}, {48, 26, cBlue}, {48, 38, cBlue}}},
 		{name: "lo-winding.emf", divergence: "WINDING (nonzero) polygon fill is drawn as ALTERNATE",
 			data:   emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetPolyFillMode, 2), emfPolyPolygon(EMRPolyPolygon, []int32{4, 4, 60, 4, 60, 60, 4, 60}, []int32{20, 20, 80, 20, 80, 50, 20, 50})),
 			probes: []probe{{40, 30, cBlue}, {10, 10, cBlue}, {70, 30, cBlue}}, libreOffice: []probe{{40, 30, cWhite}, {10, 10, cBlue}, {70, 30, cBlue}}},

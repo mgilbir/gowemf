@@ -217,6 +217,7 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
 | `lo-shape-edges.emf` | EMF RoundRect, ArcTo and a clockwise Pie built without their right and bottom edges | Edges included, as Windows' EMF playback does; LibreOffice includes them for Rectangle and Ellipse |
 | `lo-stretchdib-partial.emf`/`.wmf` | Partial StretchDIBits and StretchDIB sources measured from the top of the image | Measured from the bottom row in either row order, as Windows does |
+| `lo-pen-aniso.emf` | Pen under an anisotropic page mapping drawn round with the x-scaled width | Pen transformed with the mapping, as Windows draws it |
 | `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
 | `lo-exclude-clip.emf` | ExcludeClipRect ignored | Rectangle excluded |
 | `lo-region-copy.emf` | ExtSelectClipRgn RGN_COPY ignored | Region replaces the clip |
@@ -228,9 +229,7 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-transparentblt.emf` | EMR_TRANSPARENTBLT draws nothing | Color-keyed transfer |
 
 LibreOffice agrees with playback for RGN_OR and RGN_DIFF
-region clipping, OffsetClipRgn, clip paths, ExtCreatePen widths under
-anisotropic page mappings, AlphaBlend
-and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
+region clipping, OffsetClipRgn, clip paths, AlphaBlend and PATCOPY. Hatch rendering is not compared: LibreOffice and backends draw
 device patterns differently, and the test backend does not implement them.
 Dashes are likewise left to backends and not compared.
 
@@ -555,6 +554,14 @@ Corrected after the comparison:
   equal colors, red/blue, blue 10/red 9), which rules out luminance
   weights. All 32 monochrome scenes, including the bottom-up
   `lo-mono-brush.emf`, now match GDI and GDI+ exactly.
+- Pen widths: GDI and GDI+ transform geometric pens, from EMR_CREATEPEN,
+  EMR_EXTCREATEPEN and WMF META_CREATEPENINDIRECT alike, with the page
+  mapping: under an anisotropic mapping a 10-unit pen draws a horizontal
+  line as thick as the y scale makes it and a vertical one as the x scale
+  does, in EMF and natively played WMF. Play no longer draws such pens
+  round with the x-scaled width: unmatched against GDI, the anisotropic pen
+  experiments drop from up to 259 to 0 (native WMF from 248 to 0) and
+  `mapping.emf` from 42 to 3; isotropic ones matched before and after.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of

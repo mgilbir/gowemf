@@ -336,19 +336,36 @@ func TestPlayResourceLimits(t *testing.T) {
 
 func TestPlayResolvesPens(t *testing.T) {
 	line := emfPoints(EMRPolyline, 0, 0, 10, 0)
-	// LogPen: geometric with round caps/joins, width scaled by the logical
-	// x-axis under GM_COMPATIBLE (MS-WMF 3.1.4.2), here x0.5 and y x2.
+	// LogPen: geometric with round caps/joins, a circle of its logical width
+	// transformed with the page mapping, here x0.5 and y x2, as Windows
+	// draws it.
 	aniso := []byte{}
 	for _, r := range [][]byte{emfValue(EMRSetMapMode, 8), emfPoint(EMRSetWindowExtEx, 2, 1), emfPoint(EMRSetViewportExtEx, 1, 2)} {
 		aniso = append(aniso, r...)
 	}
 	b := record(t, emfScene(96, 64, 4, append(emfSplit(aniso), emfPen(1, 0, 8, blue), emfSelect(1), line)...), PlayOptions{})
 	s := b.strokes[0].stroke
-	if s.Hairline || s.Width != 4 || s.Transform != Identity() || s.Cap != CapRound || s.Join != JoinRound || s.Dash != DashSolid || s.Paint.Color != cBlue {
+	if s.Hairline || s.Width != 8 || s.Transform != (Matrix{M11: .5, M22: 2}) || s.Cap != CapRound || s.Join != JoinRound || s.Dash != DashSolid || s.Paint.Color != cBlue {
 		t.Fatalf("LogPen: %+v", s)
 	}
 	if s.PixelCenter != (Point{.5, .5}) {
 		t.Fatal("pixel center", s.PixelCenter)
+	}
+	// WMF pens are transformed the same way: y x0.5 here.
+	b = record(t, wmfScene(96, 64, 1, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 100, 100), wmfRec(MetaSetViewportExt, 50, 100),
+		wmfPen(0, 10, blue), wmfRec(MetaSelectObject, 0), wmfPoly(MetaPolyline, 10, 20, 60, 20)), PlayOptions{})
+	if s := b.strokes[0].stroke; s.Width != 10 || s.Transform.M12 != 0 || s.Transform.M21 != 0 || math.Abs(s.Transform.M22/s.Transform.M11-.5) > 1e-12 {
+		t.Fatalf("WMF pen: %+v", s)
+	}
+	// A PS_INSIDEFRAME pen insets a WMF box by its width along each axis.
+	frame := func(style uint16) *recordingBackend {
+		return record(t, wmfScene(96, 64, 1, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 100, 100), wmfRec(MetaSetViewportExt, 50, 100),
+			wmfPen(style, 10, blue), wmfRec(MetaSelectObject, 0), wmfBox(MetaRectangle, 0, 0, 80, 80)), PlayOptions{})
+	}
+	inside, plain := frame(6), frame(0)
+	d := Point{inside.fills[0].path.Points[0].X - plain.fills[0].path.Points[0].X, inside.fills[0].path.Points[0].Y - plain.fills[0].path.Points[0].Y}
+	if m := plain.strokes[0].stroke.Transform; !(d.X > 0) || math.Abs(d.X/d.Y-m.M11/m.M22) > 1e-9 {
+		t.Fatalf("inside frame inset %v for pen transform %+v", d, m)
 	}
 	// ExtCreatePen style bits and a GM_ADVANCED world transform.
 	world := emfWorld(Matrix{M11: 2, M22: 3})
@@ -364,13 +381,13 @@ func TestPlayResolvesPens(t *testing.T) {
 			t.Fatal("hairline", b.strokes[0].stroke)
 		}
 	}
-	// A user style copies its dashes before scaling them, keeps them in pen
-	// units, and receives the opaque background color for gaps.
+	// A user style copies its dashes, keeps them in pen units, and receives
+	// the opaque background color for gaps.
 	user := emfRecord(EMRExtCreatePen, longs(1, 0, 0, 0, 0, 0x10000|7, 4, 0, red, 0, 2, 3, 5))
 	b = record(t, emfScene(96, 64, 4, append(emfSplit(aniso), user, emfSelect(1), emfValue(EMRSetBkColor, green), line, line)...), PlayOptions{})
 	for _, op := range b.strokes {
 		s := op.stroke
-		if s.Dash != DashUser || len(s.Dashes) != 2 || s.Dashes[0] != 1.5 || s.Dashes[1] != 2.5 || s.Gap == nil || s.Gap.Color != cGreen {
+		if s.Dash != DashUser || len(s.Dashes) != 2 || s.Dashes[0] != 3 || s.Dashes[1] != 5 || s.Gap == nil || s.Gap.Color != cGreen {
 			t.Fatalf("user style: %+v", s)
 		}
 	}
@@ -378,9 +395,9 @@ func TestPlayResolvesPens(t *testing.T) {
 	if s := b.strokes[0].stroke; s.Dash != DashDot || s.Gap != nil {
 		t.Fatalf("transparent dotted pen: %+v", s)
 	}
-	// EMF reference pixels scale with the destination.
+	// EMF reference pixels and pens scale with the destination.
 	b = record(t, emfScene(96, 64, 4, emfPen(1, 0, 3, red), emfSelect(1), line), PlayOptions{Destination: Box{Width: 192, Height: 32}})
-	if s := b.strokes[0].stroke; s.PixelCenter != (Point{1, .25}) || s.Width != 6 {
+	if s := b.strokes[0].stroke; s.PixelCenter != (Point{1, .25}) || s.Width != 3 || s.Transform != (Matrix{M11: 2, M22: .5}) {
 		t.Fatalf("scaled destination: %+v", s)
 	}
 }

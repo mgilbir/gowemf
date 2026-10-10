@@ -450,6 +450,73 @@ LibreOffice comparison. They covered font units and page scale, styles,
 glyph/code-unit selection, realized advances, matrix order and sign, vertical
 and matrix reporting, decoration extents and the brush.
 
+## Windows GDI and GDI+
+
+Windows is the primary playback oracle. One series of runs on a GitHub
+Windows Server 2025 runner (build 26100, gdiplus.dll 10.0.26100.33438,
+gdi32.dll 10.0.26100.32995, 96 DPI) settled the interpretations below; the
+job was then removed and is not part of CI. `tools/windows/oracle.ps1`
+reproduces it by hand. It renders every generated scene with GDI
+(`PlayEnhMetaFile`) and GDI+ (`Graphics.DrawImage` of a `Metafile`), has GDI+
+itself record metafiles of the features in question, extracts the hatch
+patterns, and decodes byte sequences with `MultiByteToWideChar`.
+`TestCompareWindowsOutputs`, `TestCompareWindowsDecoding` and
+`rendercheck`'s `TestCompareWindowsText` compare the downloaded outputs
+(`GOWEMF_WINDOWS_OUT`) with playback under the same neighborhood metric as
+the LibreOffice scenes. The reference backend anti-aliases where GDI and
+GDI+ fill aliased, so edge pixels differ even where geometry agrees; the
+findings rest on scenes that match exactly or on measured edges.
+
+Confirmed, with unmatched pixels against GDI+ (of 6,144 unless stated):
+
+| Interpretation | Evidence |
+| --- | --- |
+| Fractional image source rectangles (exact mapping, clipped) | `plus-image-fraction.emf`: 0 |
+| Path gradient blend positions run from the boundary (0) to the center (1); factors move from the boundary color toward the center color; preset colors replace both | `win-pathgrad-factors`, `-presets`, `-plain`: 0 each; a GDI+-recorded `Blend` and `ColorBlend` draw the same |
+| Compound pens with round and miter joins as differences of strokes | `lo-plus-compound-joins.emf` (round and miter): 0; `lo-plus-compound.emf`: 0 |
+| Custom line caps under `CustomLineCaps`: an adjustable arrow, an asymmetric fill-path cap and a stroke-path start cap, recorded by GDI+ | `rec-caps.emf`: 0 |
+| Bidirectional text, right-to-left reading order and right-to-left glyphs placed at the right of their advances | `text-bidi.emf`: same order and positions under GDI (Arial substituted for Liberation Sans) |
+| Double-byte decoding, including invalid sequences, and per-byte advances | `MultiByteToWideChar`: 0 differences over every byte, byte pair and lead/trail/`A` triple of code pages 932, 936, 949 and 950; `text-dbcs.wmf`: same positions |
+| Hatch patterns anchored at the rendering origin | shifting the origin to (3,5) shifts every cell by (3,5); `win-hatches.emf`: 11 |
+| Top-level EMF frame mapping without an extra pixel | `win-frame-edge.emf`: polygon edges at device x 48, 60, 90 and y 32 land on those destination columns and rows under both |
+
+Corrected after the comparison:
+
+- szlMicrometers (#15): an edge at device x 900 on a 270 mm device whose
+  szlMicrometers refines szlMillimeters by 0.3% lands at 900 under GDI and
+  GDI+ (szlMicrometers would put it near 903). Play now always uses
+  szlMillimeters; `win-micrometers-refine.emf` (1024x768): 0 of 786,432.
+- Metafile images (#19): GDI+ records the whole of a 40 x 20 pixel EMF frame
+  as a 41 x 21 source, and of a placeable WMF as its logical bounds (600 x
+  300 at 1440 units per inch). Drawn content shows the EMF frame filling
+  the larger image. Embedding through GDI+ the EMF and WMF of
+  `plus-metafile-image.emf`: 32 each, from 2,112 and 2,308. Without image
+  attributes GDI+ draws nothing where a source rectangle extends past a
+  bitmap or metafile image (`rec-image-outside.emf`), so Play no longer
+  reports that case.
+- Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
+  byte; Windows yields the default character and then U+0000.
+- Compound pens with bevel joins (#20): GDI+ connects the inner sides of
+  bevelled band edges with crossing segments that reach into the gaps
+  between bands. Those pens are reported again.
+- Hatch styles (#22): the 8x8 patterns of all 53 styles, with the coverage
+  of the anti-aliased diagonals of styles 2, 3 and 5, are in
+  `plus_hatch_tables.go`. Red on blue blends linearly in sRGB (233,0,21 for
+  coverage 234). GDI+'s 90-percent hatch covers 62 of 64 pixels.
+- Test fixtures: GDI+ abandons a metafile at an EMF+ record whose DataSize is
+  not 32-bit aligned, and draws nothing for a compressed bitmap whose header
+  fields are zero, though MS-EMFPLUS 2.2.2.2 calls them undefined. The
+  generated fixtures now write both as GDI+ does; the decoder still accepts
+  the lenient forms. GDI+ serializes a placeable WMF image with the 24-byte
+  padded header described under "Embedded placeable-WMF compatibility".
+
+Not settled by these runs: some earlier GDI scenes differ from Windows in
+ways not yet investigated. GDI and GDI+ draw nothing at all for
+`lo-mono-brush.emf`, which suggests a generated record they reject, and
+`lo-compatible-arc.emf`, `lo-palette-index.emf`, `lo-restore-reused.emf`
+and `bitmaps.emf` differ in content. They are left for a later comparison
+and are not claimed as agreement either way.
+
 ## Decoder and playback extensions
 
 TIFF parsing follows the TIFF 6.0 structure, strip, PackBits, LZW, predictor and

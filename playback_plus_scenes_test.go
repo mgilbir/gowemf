@@ -272,6 +272,23 @@ func scenePlusImageFraction() []byte {
 	)
 }
 
+// sceneInnerEMF is a 40 x 20 pixel EMF: polygons in a red left half and a
+// blue right half, each with a 2-unit white margin.
+func sceneInnerEMF() []byte {
+	square := func(x0, x1 int32) []int32 { return []int32{x0, 2, x1, 2, x1, 18, x0, 18} }
+	return emfScene(40, 20, 3, emfSelect(nullPen), emfBrush(1, 0, red), emfBrush(2, 0, blue),
+		emfSelect(1), emfPoints(EMRPolygon, square(2, 18)...), emfSelect(2), emfPoints(EMRPolygon, square(21, 38)...))
+}
+
+// sceneInnerWMF is the same picture as a placeable WMF of 40 x 20 logical
+// units.
+func sceneInnerWMF() []byte {
+	wsquare := func(x0, x1 int16) []int16 { return []int16{x0, 2, x1, 2, x1, 18, x0, 18} }
+	return wmfScene(40, 20, 3, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 20, 40),
+		wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, red, 0), wmfRec(MetaSelectObject, 1), wmfPoly(MetaPolygon, wsquare(2, 18)...),
+		wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 2), wmfPoly(MetaPolygon, wsquare(21, 38)...))
+}
+
 // Embedded metafiles drawn as images: a 40 x 20 pixel EMF, polygons in a
 // red left half and a blue right half each with a 2-unit white margin,
 // scaled twice onto (4,4)-(84,44), and a placeable WMF of the same picture in
@@ -281,13 +298,7 @@ func scenePlusImageFraction() []byte {
 // 40-pixel frame fills a 41-pixel image), and of the WMF onto
 // (50,44)-(90,60), where red ends at 50+8*4/3 and blue starts at 50+11*4/3.
 func scenePlusMetafileImage(part bool) []byte {
-	square := func(x0, x1 int32) []int32 { return []int32{x0, 2, x1, 2, x1, 18, x0, 18} }
-	emf := emfScene(40, 20, 3, emfSelect(nullPen), emfBrush(1, 0, red), emfBrush(2, 0, blue),
-		emfSelect(1), emfPoints(EMRPolygon, square(2, 18)...), emfSelect(2), emfPoints(EMRPolygon, square(21, 38)...))
-	wsquare := func(x0, x1 int16) []int16 { return []int16{x0, 2, x1, 2, x1, 18, x0, 18} }
-	wmf := wmfScene(40, 20, 3, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 20, 40),
-		wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, red, 0), wmfRec(MetaSelectObject, 1), wmfPoly(MetaPolygon, wsquare(2, 18)...),
-		wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 2), wmfPoly(MetaPolygon, wsquare(21, 38)...))
+	emf, wmf := sceneInnerEMF(), sceneInnerWMF()
 	// The whole of the EMF is its 41 x 21 pixel image, as GDI+ records it.
 	emfSrc, wmfSrc := [4]float64{0, 0, 41, 21}, [4]float64{0, 0, 40, 20}
 	emfDest := [4]float64{4, 4, 80, 40}

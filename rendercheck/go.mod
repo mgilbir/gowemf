@@ -5,7 +5,7 @@ go 1.26
 replace github.com/mgilbir/gowemf => ../
 
 require (
-	github.com/mgilbir/forme v0.9.0
+	github.com/mgilbir/forme v0.10.0
 	github.com/mgilbir/gowemf v0.0.0-00010101000000-000000000000
 )
 

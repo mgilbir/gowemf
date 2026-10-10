@@ -642,18 +642,44 @@ func blend(dst *image.NRGBA, i int, c color.NRGBA, a float64) {
 	}
 }
 
-// paint composites p over pixels with coverage cov, already clipped.
-func (c *Canvas) paint(cov []float64, p Paint) error {
-	w, h := c.size()
+// sampler returns the color of p at a pixel; ok is false where a clamped
+// pattern paints nothing.
+func (p Paint) sampler() (func(x, y int) (color.NRGBA, bool), error) {
 	var inv Matrix
 	if p.Pattern != nil {
 		var ok bool
 		if inv, ok = invert(p.PatternTransform); !ok {
-			return errors.New("singular pattern transform")
+			return nil, errors.New("singular pattern transform")
 		}
 	}
 	if p.Gradient != nil && len(p.Gradient.Stops) == 0 {
-		return errors.New("gradient without stops")
+		return nil, errors.New("gradient without stops")
+	}
+	return func(x, y int) (color.NRGBA, bool) {
+		switch {
+		case p.Gradient != nil:
+			return p.Gradient.at(Point{float64(x) + .5, float64(y) + .5}), true
+		case p.Pattern != nil:
+			q := inv.Apply(Point{float64(x) + .5, float64(y) + .5})
+			b := p.Pattern.Bounds()
+			clamp := p.Wrap == WrapClamp
+			px, okx := wrapIndex(int(math.Floor(q.X)), b.Dx(), p.Wrap == WrapFlipX || p.Wrap == WrapFlipXY, clamp)
+			py, oky := wrapIndex(int(math.Floor(q.Y)), b.Dy(), p.Wrap == WrapFlipY || p.Wrap == WrapFlipXY, clamp)
+			if !okx || !oky {
+				return color.NRGBA{}, false
+			}
+			return color.NRGBAModel.Convert(p.Pattern.At(b.Min.X+px, b.Min.Y+py)).(color.NRGBA), true
+		}
+		return p.Color, true
+	}, nil
+}
+
+// paint composites p over pixels with coverage cov, already clipped.
+func (c *Canvas) paint(cov []float64, p Paint) error {
+	w, h := c.size()
+	at, err := p.sampler()
+	if err != nil {
+		return err
 	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -661,22 +687,79 @@ func (c *Canvas) paint(cov []float64, p Paint) error {
 			if a <= 0 {
 				continue
 			}
-			col := p.Color
-			switch {
-			case p.Gradient != nil:
-				col = p.Gradient.at(Point{float64(x) + .5, float64(y) + .5})
-			case p.Pattern != nil:
+			if col, ok := at(x, y); ok {
+				blend(c.Image, y*c.Image.Stride+x*4, col, a)
+			}
+		}
+	}
+	return nil
+}
+
+// RasterSource is the source bitmap of a raster operation: the pixels of
+// Image within Src, placed on the canvas by M.
+type RasterSource struct {
+	Image image.Image
+	Src   image.Rectangle
+	M     Matrix
+}
+
+// Raster replaces the canvas pixels inside area and the clip with the
+// ternary raster operation op of the pattern, source and destination: for
+// each bit of each 8-bit red, green and blue value, the result is bit
+// 4p+2s+d of op. Pixels are point-sampled at their centers, without
+// anti-aliasing: a pixel takes part when area and clip cover at least half
+// of it and, with a source, its center maps into Src.
+func (c *Canvas) Raster(op uint8, area Path, src *RasterSource, pattern *Paint, clip []*ClipNode) error {
+	w, h := c.size()
+	rings, _ := flattenPath(area, 0.05)
+	cov := c.clipped(scan(rings, NonZero, w, h), clip)
+	var inv Matrix
+	if src != nil {
+		var ok bool
+		if inv, ok = invert(src.M); !ok {
+			return nil
+		}
+	}
+	var at func(x, y int) (color.NRGBA, bool)
+	if pattern != nil {
+		var err error
+		if at, err = pattern.sampler(); err != nil {
+			return err
+		}
+	}
+	bitwise := func(p, s, d uint8) uint8 {
+		var out uint8
+		for bit := 0; bit < 8; bit++ {
+			idx := (p>>bit&1)<<2 | (s>>bit&1)<<1 | d>>bit&1
+			out |= (op >> idx & 1) << bit
+		}
+		return out
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if cov[y*w+x] < .5 {
+				continue
+			}
+			var pc, sc color.NRGBA
+			if src != nil {
 				q := inv.Apply(Point{float64(x) + .5, float64(y) + .5})
-				b := p.Pattern.Bounds()
-				clamp := p.Wrap == WrapClamp
-				px, okx := wrapIndex(int(math.Floor(q.X)), b.Dx(), p.Wrap == WrapFlipX || p.Wrap == WrapFlipXY, clamp)
-				py, oky := wrapIndex(int(math.Floor(q.Y)), b.Dy(), p.Wrap == WrapFlipY || p.Wrap == WrapFlipXY, clamp)
-				if !okx || !oky {
+				px, py := int(math.Floor(q.X)), int(math.Floor(q.Y))
+				if !(image.Point{px, py}).In(src.Src) {
 					continue
 				}
-				col = color.NRGBAModel.Convert(p.Pattern.At(b.Min.X+px, b.Min.Y+py)).(color.NRGBA)
+				sc = color.NRGBAModel.Convert(src.Image.At(px, py)).(color.NRGBA)
 			}
-			blend(c.Image, y*c.Image.Stride+x*4, col, a)
+			if at != nil {
+				var ok bool
+				if pc, ok = at(x, y); !ok {
+					continue
+				}
+			}
+			i := y*c.Image.Stride + x*4
+			for k, v := range [3][2]uint8{{pc.R, sc.R}, {pc.G, sc.G}, {pc.B, sc.B}} {
+				c.Image.Pix[i+k] = bitwise(v[0], v[1], c.Image.Pix[i+k])
+			}
+			c.Image.Pix[i+3] = 255
 		}
 	}
 	return nil

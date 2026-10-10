@@ -118,3 +118,19 @@ func (rb *rasterBackend) FillGradient(mesh []GradientTriangle, clip Clip) error 
 	}
 	return rb.c.FillGouraud(out, rb.clip(clip))
 }
+
+func (rb *rasterBackend) DrawRaster(d RasterDraw, clip Clip) error {
+	var src *raster.RasterSource
+	if d.Source != nil {
+		src = &raster.RasterSource{Image: d.Source.Image, Src: d.Source.Source, M: toRasterMatrix(d.Source.Transform)}
+	}
+	var pattern *raster.Paint
+	if d.Pattern != nil {
+		p, err := toRasterPaint(*d.Pattern)
+		if err != nil {
+			return err
+		}
+		pattern = &p
+	}
+	return rb.c.Raster(uint8(d.Operation), toRasterPath(d.Area), src, pattern, rb.clip(clip))
+}

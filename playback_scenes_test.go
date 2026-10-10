@@ -40,7 +40,7 @@ type renderScene struct {
 }
 
 func renderScenes() []renderScene {
-	return append(append(append(append(agreementScenes(), fillScenes()...), wmfFillScenes()...), divergenceScenes()...), plusScenes()...)
+	return append(append(append(append(append(agreementScenes(), fillScenes()...), wmfFillScenes()...), divergenceScenes()...), plusScenes()...), rasterScenes()...)
 }
 
 const (
@@ -720,4 +720,85 @@ func wmfFillScenes() []renderScene {
 			probes:      []probe{{10, 10, cRed}, {30, 30, cWhite}, {10, 36, cRed}, {50, 52, cGreen}, {68, 20, cBlue}, {58, 20, cWhite}, {80, 20, cWhite}},
 			libreOffice: []probe{{10, 10, cWhite}, {30, 52, cWhite}, {50, 20, cBlue}, {80, 20, cBlue}}},
 	}
+}
+
+// Raster operations need a backend that reads its destination; the scene
+// backend implements RasterBackend.
+func rasterScenes() []renderScene {
+	sprite := []probe{{24, 24, cRed}, {12, 12, cBlue}, {36, 36, cBlue}, {4, 4, cBlue}, {48, 48, cRed}, {42, 42, cBlue}, {54, 42, cWhite}, {70, 20, cWhite}}
+	return []renderScene{
+		{name: "raster-sprite.emf", data: sceneRasterSprite(false), probes: sprite},
+		{name: "raster-sprite.wmf", data: sceneRasterSprite(true), probes: sprite},
+		{name: "lo-raster-ops.emf", divergence: "SRCINVERT is drawn as SRCCOPY, DSTINVERT inverts with the selected brush like PATINVERT, and PATINVERT draws nothing",
+			data: sceneRasterOps(),
+			probes: []probe{
+				{56, 4, cWhite}, {57, 5, cWhite}, {58, 6, color.NRGBA{25, 225, 225, 255}}, {62, 8, color.NRGBA{25, 225, 225, 255}}, {80, 8, color.NRGBA{225, 55, 195, 255}}, {62, 16, color.NRGBA{215, 195, 35, 255}}, {80, 16, color.NRGBA{25, 55, 225, 255}},
+				{44, 28, color.NRGBA{255, 255, 0, 255}}, {52, 28, cBlack},
+				{72, 34, color.NRGBA{255, 63, 255, 255}}, {72, 44, cWhite}},
+			libreOffice: []probe{{62, 8, qRed}, {80, 16, qYellow}, {44, 28, cBlack}, {52, 28, color.NRGBA{255, 255, 0, 255}}, {72, 34, cWhite}}},
+	}
+}
+
+func spriteDIBs() (mask, image []byte) {
+	inside := func(x, y int) bool { return x >= 4 && x < 12 && y >= 4 && y < 12 }
+	maskInfo, maskBits := sceneDIB(16, 16, false, func(x, y int) color.NRGBA {
+		if inside(x, y) {
+			return cBlack
+		}
+		return cWhite
+	})
+	imageInfo, imageBits := sceneDIB(16, 16, false, func(x, y int) color.NRGBA {
+		if inside(x, y) {
+			return cRed
+		}
+		return cBlack
+	})
+	return cat(maskInfo, maskBits), cat(imageInfo, imageBits)
+}
+
+const codeSrcAnd, codeSrcPaint = 0x008800c6, 0x00ee0086
+
+// sceneRasterSprite draws a sprite, a 16x16 mask through SRCAND and its image
+// through SRCPAINT, over a blue (0,0)-(48,60): at 2x onto (8,8)-(40,40) and at 1x
+// across the blue edge onto (40,40)-(56,56). The EMF uses StretchDIBits; the
+// WMF uses StretchDIB for the first and DIBStretchBlt for the second.
+func sceneRasterSprite(wmf bool) []byte {
+	mask, image := spriteDIBs()
+	if wmf {
+		stretchDIB := func(rop uint32, x, y, size int16, dib []byte) Record {
+			return testRecord(WMF, MetaStretchDIB, 0, cat(longs(int32(rop)), words(0, 16, 16, 0, 0, size, size, y, x), dib))
+		}
+		dibStretchBlt := func(rop uint32, x, y, size int16, dib []byte) Record {
+			return testRecord(WMF, MetaDIBStretchBlt, 0, cat(longs(int32(rop)), words(16, 16, 0, 0, size, size, y, x), dib))
+		}
+		return wmfScene(96, 64, 2, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96),
+			wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 1), wmfBox(MetaRectangle, 0, 0, 48, 60),
+			stretchDIB(codeSrcAnd, 8, 8, 32, mask), stretchDIB(codeSrcPaint, 8, 8, 32, image),
+			dibStretchBlt(codeSrcAnd, 40, 40, 16, mask), dibStretchBlt(codeSrcPaint, 40, 40, 16, image))
+	}
+	split := func(dib []byte) ([]byte, []byte) { return dib[:40], dib[40:] }
+	mi, mb := split(mask)
+	ii, ib := split(image)
+	return emfScene(96, 64, 3,
+		emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfBox(EMRRectangle, 0, 0, 48, 60),
+		emfStretchDIBits(8, 8, 32, 32, 0, 0, 16, 16, codeSrcAnd, mi, mb),
+		emfStretchDIBits(8, 8, 32, 32, 0, 0, 16, 16, codeSrcPaint, ii, ib),
+		emfStretchDIBits(40, 40, 16, 16, 0, 0, 16, 16, codeSrcAnd, mi, mb),
+		emfStretchDIBits(40, 40, 16, 16, 0, 0, 16, 16, codeSrcPaint, ii, ib),
+	)
+}
+
+// sceneRasterOps draws, over a blue left half: SRCINVERT quadrants on white
+// at (56,4)-(88,20), DSTINVERT across the blue edge at (40,24)-(56,32), and
+// PATINVERT with a green brush at (56,28)-(88,40).
+func sceneRasterOps() []byte {
+	info, bits := sceneDIB(16, 8, false, quadrants)
+	const srcInvert, dstInvert, patInvert = 0x00660046, 0x00550009, 0x005a0049
+	return emfScene(96, 64, 3,
+		emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfBox(EMRRectangle, 0, 0, 48, 64),
+		emfStretchDIBits(56, 4, 32, 16, 0, 0, 16, 8, srcInvert, info, bits),
+		emfBlt(EMRBitBlt, 40, 24, 16, 8, dstInvert, 0, 0, 0, 0, nil, nil),
+		emfBrush(2, 0, green), emfSelect(2),
+		emfBlt(EMRBitBlt, 56, 28, 32, 12, patInvert, 0, 0, 0, 0, nil, nil),
+	)
 }

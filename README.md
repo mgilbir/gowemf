@@ -110,8 +110,7 @@ steps.
 
 The EMF header frame, or the WMF placeable bounds, is mapped onto `Destination`.
 WMF files without a placeable header need `PlayOptions.Placeable`. Flood fill,
-region inversion, destination-dependent raster operations and other omissions
-are never skipped silently.
+region inversion and other omissions are never skipped silently.
 
 EMF+ files play their EMF+ records, together with the GDI records inside GetDC
 intervals; `Stream.PreferGDI` plays the GDI fallback of a Dual file instead.
@@ -131,7 +130,12 @@ monochrome pattern brushes colored by the text and background colors, logical
 palettes with PALETTEINDEX colors and DIB_PAL_COLORS bitmaps, and WMF region
 clipping are resolved into ordinary fills and clips. Gradient fills are
 delivered as Gouraud-shaded triangle meshes to backends that also implement
-`GradientBackend`; others get them reported.
+`GradientBackend`; others get them reported. Bitmap and pattern transfers
+whose raster operations combine source, brush and destination bitwise, such
+as the SRCAND and SRCPAINT pair that draws a sprite through a mask, go to
+backends that also implement `RasterBackend`. Other backends get them
+reported, except an exact sprite pair (a black and white mask, and an image
+that is black wherever the mask is white), which becomes one masked image.
 
 Backends that also implement `TextBackend` (`MeasureText` and `DrawText`)
 receive text. `Play` does the GDI placement itself: text alignment, explicit

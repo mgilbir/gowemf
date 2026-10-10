@@ -36,3 +36,50 @@ func TestPlusBezierTypeRuns(t *testing.T) {
 		t.Fatal("Bezier run marked as line", err)
 	}
 }
+
+// TestPlusPathUndefinedFlags checks that PathPointFlags bits other than R and
+// C (MS-EMFPLUS 2.2.1.6) neither reject a path nor change its encoding.
+// Writers set 0x2000 in practice.
+func TestPlusPathUndefinedFlags(t *testing.T) {
+	types := []byte{0, 1, 1, 0x81}
+	encodings := map[uint32][]byte{
+		0:      cat(fl(10, 10, 90, 10, 90, 90, 10, 90), types),
+		0x4000: cat(dwords(10|10<<16, 90|10<<16, 90|90<<16, 10|90<<16), types),
+		// EmfPlusPointR: 7-bit 10 and 0, 15-bit +80 and -80; then
+		// EmfPlusPathPointTypeRLE runs and padding.
+		0x0800: {10, 10, 0x80, 80, 0, 0, 0x80, 80, 0xff, 0xb0, 0, 0x41, 0, 0x42, 1, 0x41, 0x81, 0, 0, 0},
+	}
+	encodings[0x4800] = encodings[0x0800] // R makes C undefined.
+	want := []Point{{10, 10}, {90, 10}, {90, 90}, {10, 90}}
+	for flags, body := range encodings {
+		for bit := uint32(1); bit != 0; bit <<= 1 {
+			if bit&0x4800 != 0 {
+				continue
+			}
+			for _, f := range []uint32{flags, flags | bit} {
+				v, err := DecodePlusObject(3, cat(dwords(plusVersion, 4, f), body), DecodeLimits{})
+				if err != nil {
+					t.Fatalf("flags %#x: %v", f, err)
+				}
+				p := v.(PlusPath)
+				if p.Flags != f || !pointsNear(pathPoints(p.Points), want...) || string(p.Types) != string(types) {
+					t.Fatalf("flags %#x: %+v", f, p)
+				}
+			}
+		}
+	}
+	b, skipped := plusPlay(t, plusScene(96, 64,
+		plusObj(0, 3, cat(dwords(plusVersion, 4, 0x2000), encodings[0])),
+		plusRec(PlusFillPathRecord, 0x8000, dwords(0xff0000ff))), PlayOptions{})
+	if len(skipped) != 0 || len(b.fills) != 1 {
+		t.Fatal(skipped, b.fills)
+	}
+}
+
+func pathPoints(p Points) []Point {
+	out := make([]Point, p.Len())
+	for i := range out {
+		out[i] = p.At(i)
+	}
+	return out
+}

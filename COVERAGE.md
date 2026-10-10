@@ -142,7 +142,9 @@ Reserved MultiFormat records (`4005`–`4007`) are explicitly malformed for type
 decoding, rather than mistaken for an unimplemented valid drawing operation.
 Path type flags, starting points, complete Bezier triples, figure closures and
 RLE Bezier indicators are validated before exposing a path, including nested cap
-paths. Dash/marker flags remain available to the renderer. Embedded metafiles are
+paths. PathPointFlags bits other than R and C have no defined meaning
+(MS-EMFPLUS 2.2.1.6); writers set 0x2000, so those bits are kept in
+`PlusPath.Flags` but ignored. Dash/marker flags remain available to the renderer. Embedded metafiles are
 not automatically recursed into. The consumer must impose a nesting/aggregate
 resource budget before recursive playback.
 

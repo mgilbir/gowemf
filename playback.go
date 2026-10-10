@@ -40,10 +40,10 @@ type PaintKind uint8
 
 const (
 	PaintSolid PaintKind = iota + 1
-	// PaintHatch draws Color in an 8x8 device-pixel hatch selected by Hatch
-	// (HS_HORIZONTAL=0 through HS_DIAGCROSS=5). Background is the background
-	// color, or nil for TRANSPARENT background mode. GDI colors are opaque;
-	// EMF+ hatch colors may be translucent.
+	// PaintHatch draws Color in an 8x8 device-pixel GDI hatch selected by
+	// Hatch (HS_HORIZONTAL=0 through HS_DIAGCROSS=5). Background is the
+	// background color, or nil for TRANSPARENT background mode. EMF+ hatch
+	// brushes arrive instead as PaintPattern, with GDI+'s pattern pixels.
 	PaintHatch
 	// PaintPattern repeats Pattern as Wrap describes. GDI patterns are opaque
 	// and tiled; EMF+ texture brushes may carry alpha and other wrap modes.

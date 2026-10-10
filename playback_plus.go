@@ -487,15 +487,7 @@ func (p *player) plusBrushPaint(r Record, b PlusBrush, obj *plusObject, m Matrix
 	case 0:
 		return &Paint{Kind: PaintSolid, Color: argb(b.Color)}, nil
 	case 1:
-		// Styles 0-5 have the GDI hatch numbering and patterns; the other
-		// GDI+ patterns are not specified in MS-EMFPLUS. The pattern grid is
-		// in device pixels anchored at the rendering origin.
-		if b.Hatch > 5 {
-			return nil, p.unsupported(r, fmt.Sprintf("EMF+ hatch style %d", b.Hatch))
-		}
-		bg := argb(b.BackColor)
-		o := p.plus.origin
-		return &Paint{Kind: PaintHatch, Hatch: b.Hatch, Color: argb(b.Color), Background: &bg, PatternTransform: Matrix{M11: 1, M22: 1, Dx: o.X, Dy: o.Y}.Then(p.base)}, nil
+		return p.plusHatch(r, b)
 	case 2:
 		t := b.Texture
 		if t == nil || t.Image == nil {
@@ -1260,4 +1252,30 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 		return nil
 	}
 	return p.backend.DrawImage(draw, sourceClip(draw, o, size, p.plusCurrentClip()))
+}
+
+// plusHatch draws an EMF+ hatch brush as GDI+ does: its 8x8 pattern of
+// foreground coverage (plusHatchCoverage), repeated over device pixels from
+// the rendering origin. Pattern pixels blend the two colors by coverage; only
+// the anti-aliased diagonals of styles 2, 3 and 5 have partial coverage, and
+// how GDI+ blends those with translucent colors is unknown.
+func (p *player) plusHatch(r Record, b PlusBrush) (*Paint, error) {
+	if b.Hatch >= uint32(len(plusHatchCoverage)) {
+		return nil, p.unsupported(r, fmt.Sprintf("EMF+ hatch style %d", b.Hatch))
+	}
+	fg, bg := argb(b.Color), argb(b.BackColor)
+	cell := &plusHatchCoverage[b.Hatch]
+	im := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			c := cell[y][x]
+			if c != 0 && c != 255 && (fg.A != 255 || bg.A != 255) {
+				return nil, p.unsupported(r, "EMF+ translucent anti-aliased hatch")
+			}
+			mix := func(f, g uint8) uint8 { return uint8((int(g)*(255-int(c)) + int(f)*int(c) + 127) / 255) }
+			im.SetNRGBA(x, y, color.NRGBA{mix(fg.R, bg.R), mix(fg.G, bg.G), mix(fg.B, bg.B), mix(fg.A, bg.A)})
+		}
+	}
+	o := p.plus.origin
+	return &Paint{Kind: PaintPattern, Pattern: im, PatternTransform: Matrix{M11: 1, M22: 1, Dx: o.X, Dy: o.Y}.Then(p.base), Wrap: WrapTile}, nil
 }

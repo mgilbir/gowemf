@@ -117,7 +117,8 @@ intervals; `Stream.PreferGDI` plays the GDI fallback of a Dual file instead.
 EMF+ playback keeps the GDI+ graphics state: Save/Restore, containers,
 world and page transforms, pixel offset, compositing and interpolation modes,
 and clipping with all combine modes and region trees. It resolves solid,
-hatch, texture and linear-gradient brushes (`PaintLinearGradient`), pens with
+hatch (with GDI+'s patterns), texture and linear-gradient brushes
+(`PaintLinearGradient`), pens with
 caps, joins, dashes and dash offsets, shapes, paths, cardinal splines and
 bitmap images. EMF+ driver strings go to a `TextBackend` like GDI text.
 Path gradient fills, symmetric compound pens and separate start and end caps

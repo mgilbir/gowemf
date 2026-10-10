@@ -371,7 +371,7 @@ func (p *player) emf(c Command) error {
 		brush := p.dc.brush.brush
 		if v.HasBrush {
 			var err error
-			if brush, err = p.brushObject(r, v.Brush); err != nil {
+			if brush, err = p.brushObject(r, v.Brush); err != nil || brush == nil {
 				return err
 			}
 		}

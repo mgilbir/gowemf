@@ -69,6 +69,9 @@ func (p *player) selectPalette(id uint32) {
 		p.dc.palette = paletteRef{} // DEFAULT_PALETTE
 		return
 	}
+	if p.beyondTable(id) {
+		return
+	}
 	p.dc.palette = paletteRef{pal: p.palette(id), slot: id, generation: p.generations[id], selected: true}
 }
 
@@ -76,6 +79,9 @@ func (p *player) selectPalette(id uint32) {
 // Stream has resolved WMF updates to the selected palette and checked ranges.
 func (p *player) updatePalette(r Record, v Palette, op string) error {
 	pal := p.palette(v.Handle)
+	if pal == nil && p.beyondTable(v.Handle) {
+		return nil
+	}
 	if pal == nil {
 		return malformed(r.Offset, "palette update target")
 	}
@@ -446,6 +452,9 @@ func (p *player) brushObject(r Record, id uint32) (*gdiBrush, error) {
 			return nil, malformed(r.Offset, "stock brush reference")
 		}
 		return stockBrushes[n], nil
+	}
+	if p.beyondTable(id) {
+		return nil, nil
 	}
 	if uint64(id) >= uint64(len(p.objects)) || p.objects[id].brush == nil {
 		return nil, malformed(r.Offset, fmt.Sprintf("brush object %d", id))

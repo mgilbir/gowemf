@@ -127,8 +127,9 @@ func TestStreamAssembledObject(t *testing.T) {
 }
 
 func TestStreamObjectTableBoundaries(t *testing.T) {
-	// MS-EMF 3.1.1.1 explicitly requires Handles+1 slots: index zero is
-	// reserved and the highest index equal to Handles remains usable.
+	// MS-EMF 3.1.1.1 sizes the table for Handles+1 slots: index zero is
+	// reserved and the highest index equal to Handles is structurally valid.
+	// Play follows Windows, which ignores that index (TestPlayHandleCountBound).
 	file := emfFixture(emfRecord(38, longs(1, 0, 1, 0, 0)), emfRecord(37, longs(1)))
 	if _, err := Stream(file, StreamOptions{}, nil); err != nil {
 		t.Fatal(err)

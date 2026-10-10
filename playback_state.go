@@ -285,7 +285,18 @@ func (p *player) restore(n int32) {
 	p.saved = p.saved[:level]
 }
 
+// beyondTable reports the EMF object index equal to the header's Handles
+// count. MS-EMF 3.1.1.1 sizes the table for it, but Windows counts the
+// reserved index zero among the Handles: creating an object there fails, and
+// records that use the index do nothing (ORACLES.md).
+func (p *player) beyondTable(id uint32) bool {
+	return p.format == EMF && uint64(id)+1 == uint64(len(p.objects))
+}
+
 func (p *player) create(r Record, id uint32, body any) error {
+	if p.beyondTable(id) {
+		return nil // drawn as Windows draws it, so not reported
+	}
 	var o playObject
 	switch v := body.(type) {
 	case Pen:

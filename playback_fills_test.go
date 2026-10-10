@@ -36,11 +36,31 @@ func reasonsOf(o *PlayOptions) *[]string {
 	return &reasons
 }
 
+// An EMF object index equal to the header's Handles count is outside the
+// table Windows plays with: the creation and records that use the index do
+// nothing, so the previous brush and palette stay selected.
+func TestPlayHandleCountBound(t *testing.T) {
+	box := emfBox(EMRRectangle, 0, 0, 10, 10)
+	o := PlayOptions{}
+	reasons := reasonsOf(&o)
+	b := record(t, emfScene(96, 64, 3, emfSelect(nullPen), emfBrush(1, 0, red), emfSelect(1), box,
+		emfBrush(3, 0, blue), emfSelect(3), box, emfRegionRecord(EMRFillRgn, []int32{3}, Rect{0, 0, 4, 4}), emfDelete(3),
+		emfPalette(2, [4]byte{10, 20, 30, 0}), emfValue(EMRSelectPalette, 2), emfPalette(3, [4]byte{40, 50, 60, 0}), emfValue(EMRSelectPalette, 3),
+		emfRecord(EMRSetPaletteEntries, cat(longs(3, 0, 1), []byte{70, 80, 90, 0})),
+		emfSelect(nullBrush), emfDelete(1), emfBrush(1, 0, 0x01000000), emfSelect(1), box), o)
+	if len(*reasons) != 0 {
+		t.Fatal(*reasons)
+	}
+	if len(b.fills) != 3 || b.fills[1].paint.Color != cRed || b.fills[2].paint.Color != (color.NRGBA{10, 20, 30, 255}) {
+		t.Fatal(b.fills)
+	}
+}
+
 func TestPlayPaletteColors(t *testing.T) {
 	box := emfBox(EMRRectangle, 0, 0, 10, 10)
 	pal := emfPalette(1, [4]byte{10, 20, 30, 0}, [4]byte{40, 50, 60, 1})
 	brush := emfBrush(2, 0, 0x01000001) // PALETTEINDEX(1)
-	b := record(t, emfScene(96, 64, 3, emfSelect(nullPen), pal, emfValue(EMRSelectPalette, 1), brush, emfSelect(2), box,
+	b := record(t, emfScene(96, 64, 4, emfSelect(nullPen), pal, emfValue(EMRSelectPalette, 1), brush, emfSelect(2), box,
 		emfRecord(EMRSetPaletteEntries, cat(longs(1, 1, 1), []byte{70, 80, 90, 0})), box,
 		emfBrush(3, 0, 0x02112233), emfSelect(3), box), PlayOptions{})
 	want := []color.NRGBA{{40, 50, 60, 255}, {70, 80, 90, 255}, {0x33, 0x22, 0x11, 255}}

@@ -224,6 +224,12 @@ Interpretations where the specifications leave room or conflict:
   object's resources on deletion. A selection held by a saved state, logical
   palettes included, keeps its object when the handle is deleted or reused,
   and RestoreDC reselects it, as Windows does (ORACLES.md).
+- MS-EMF 3.1.1.1 sizes the object table for Handles+1 entries, index zero
+  reserved, so `Stream` accepts an object index equal to Handles. Windows
+  counts index zero among the Handles and fails to create an object there;
+  Play likewise creates nothing there and lets selections, palette
+  updates and region fills that use the index do nothing, keeping the
+  previous selection (ORACLES.md).
 - MM_ISOTROPIC adjusts the stored viewport extent whenever an extent changes,
   keeping the smaller physical scale (MS-WMF 2.1.1.16). Switching to a scalable
   mode retains the current extents; zero extents and invalid modes are ignored,

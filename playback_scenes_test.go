@@ -304,7 +304,7 @@ func sceneTransforms() []byte {
 // Anisotropic mapping with both axes reflected, an arc in the reflected
 // space, fixed MM_LOMETRIC, and MM_ANISOTROPIC inheriting fixed extents.
 func sceneMapping() []byte {
-	return emfScene(96, 64, 4,
+	return emfScene(96, 64, 5,
 		emfSelect(nullPen),
 		emfBrush(1, 0, red), emfBrush(2, 0, blue), emfBrush(3, 0, green),
 		emfValue(EMRSetMapMode, 8),
@@ -733,7 +733,7 @@ func fillScenes() []renderScene {
 		// PALETTEINDEX colors and a DIB_PAL_COLORS bitmap read the selected
 		// logical palette.
 		{name: "lo-palette-index.emf", divergence: "PALETTEINDEX colors are drawn black and DIB_PAL_COLORS bitmaps are not drawn",
-			data: emfScene(96, 64, 3, emfSelect(nullPen),
+			data: emfScene(96, 64, 4, emfSelect(nullPen),
 				emfPalette(1, [4]byte{200, 40, 0, 0}, [4]byte{0, 120, 220, 0}), emfValue(EMRSelectPalette, 1),
 				emfBrush(2, 0, 0x01000000), emfSelect(2), emfBox(EMRRectangle, 4, 4, 44, 28),
 				emfBrush(3, 0, 0x01000001), emfSelect(3), emfBox(EMRRectangle, 52, 4, 92, 28), palBlit),

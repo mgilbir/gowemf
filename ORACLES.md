@@ -528,6 +528,15 @@ Corrected after the comparison:
   3). GDI restores a deleted logical palette the same way, and a
   PALETTEINDEX brush then takes its entry; GDI+ uses the default palette. Deleting the current selection still
   selects the default object (`lo-delete-selected.emf`/`.wmf`: 0).
+- Object table size: GDI fails to create an EMF object at the index equal
+  to the header's Handles count, and selecting the index leaves the previous
+  object selected, though MS-EMF 3.1.1.1 sizes the table for Handles+1
+  entries. Play now ignores such creations: unmatched against GDI,
+  a brush at that index drops from 960 to 0, and `mapping.emf`, whose
+  fixture selected pen 4 of 4 handles, from 192 to 3. The scene fixtures
+  that used the index (`mapping.emf`, `lo-palette-index.emf`) now declare
+  one more handle; the old `lo-palette-index.emf` matched GDI once the
+  index was ignored.
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -544,11 +553,9 @@ Corrected after the comparison:
   the lenient forms. GDI+ serializes a placeable WMF image with the 24-byte
   padded header described under "Embedded placeable-WMF compatibility".
 
-Not settled by these runs: some earlier GDI scenes differ from Windows in
-ways not yet investigated. GDI and GDI+ draw nothing at all for
-`lo-mono-brush.emf`, which suggests a generated record they reject, and
-`lo-palette-index.emf` differs in content. They are left for a later
-comparison and are not claimed as agreement either way.
+Not settled by these runs: GDI and GDI+ draw nothing at all for
+`lo-mono-brush.emf`, which suggests a generated record they reject. It is
+left for a later comparison and is not claimed as agreement either way.
 
 ## Decoder and playback extensions
 

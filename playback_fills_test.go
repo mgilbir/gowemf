@@ -58,12 +58,14 @@ func TestPlayPaletteColors(t *testing.T) {
 	if len(*reasons) != 3 {
 		t.Fatal(*reasons)
 	}
-	// A deleted palette selected in a saved state is not restored.
+	// A palette deleted while a saved state holds it is restored with it,
+	// as Windows does, even after its slot is reused.
 	o = PlayOptions{}
 	reasons = reasonsOf(&o)
-	record(t, emfScene(96, 64, 4, emfSelect(nullPen), pal, emfValue(EMRSelectPalette, 1), brush, emfSelect(2), emfEmpty(EMRSaveDC), emfValue(EMRSelectPalette, -0x7ffffff1), emfDelete(1), emfValue(EMRRestoreDC, -1), box), o)
-	if len(*reasons) != 1 {
-		t.Fatal("restored stale palette", *reasons)
+	b = record(t, emfScene(96, 64, 4, emfSelect(nullPen), pal, emfValue(EMRSelectPalette, 1), brush, emfSelect(2), emfEmpty(EMRSaveDC), emfValue(EMRSelectPalette, -0x7ffffff1), emfDelete(1),
+		emfPalette(1, [4]byte{70, 80, 90, 0}, [4]byte{100, 110, 120, 0}), emfValue(EMRRestoreDC, -1), box), o)
+	if len(*reasons) != 0 || len(b.fills) != 1 || b.fills[0].paint.Color != (color.NRGBA{40, 50, 60, 255}) {
+		t.Fatal("restored palette", *reasons, b.fills)
 	}
 	// WMF palettes: SetPalEntries, AnimatePalette (PC_RESERVED entries only)
 	// and ResizePalette act on the selected palette.

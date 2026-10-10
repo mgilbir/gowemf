@@ -167,8 +167,9 @@ meaningful position. This bounded interpretation is documented in ORACLES.md.
 ranges, save/restore references and path-bracket construction/consumption. It
 assigns WMF's lowest available object slot using a min-heap, checks EMF handle
 bounds/stock-object indexes, and validates EMF+ reference types and configured
-slot bounds. WMF palette selection is saved/restored with generation checks so
-deleted/reused object slots cannot silently change the restored selection. Save/restore
+slot bounds. `Stream` saves and restores the WMF palette selection with
+generation checks, so its palette records cannot silently target the object
+that reused a deleted slot. Save/restore
 checks do not substitute for a renderer actually saving its complete context.
 
 Native EMF+ selection includes GDI commands only in GetDC intervals. An explicit
@@ -220,8 +221,9 @@ Interpretations where the specifications leave room or conflict:
   hairline, as are cosmetic extended pens.
 - Deleting a selected object activates the default stock object (MS-EMF
   3.1.1.1). The same rule applies to WMF, whose specification releases the
-  object's resources on deletion. A restored selection whose slot was deleted
-  or reused also falls back to the default instead of selecting another object.
+  object's resources on deletion. A selection held by a saved state, logical
+  palettes included, keeps its object when the handle is deleted or reused,
+  and RestoreDC reselects it, as Windows does (ORACLES.md).
 - MM_ISOTROPIC adjusts the stored viewport extent whenever an extent changes,
   keeping the smaller physical scale (MS-WMF 2.1.1.16). Switching to a scalable
   mode retains the current extents; zero extents and invalid modes are ignored,

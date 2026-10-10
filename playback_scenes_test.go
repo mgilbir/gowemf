@@ -266,6 +266,12 @@ func agreementScenes() []renderScene {
 			wmfRec(MetaSetViewportOrg, 64, 0), wmfRec(MetaSetViewportExt, -64, 96), wmfPen(5, 0, 0), wmfRec(MetaSelectObject, 0), wmfBrush(0, blue, 0), wmfRec(MetaSelectObject, 1),
 			wmfRec(MetaChord, 32, 10, 32, 90, 60, 90, 4, 10)),
 			probes: []probe{{48, 20, cBlue}, {48, 44, cWhite}}},
+		// RestoreDC reselects a pen deleted while a saved state held it, and
+		// deleting the object that reused its slot leaves it selected.
+		{name: "restore-deleted.emf", data: emfScene(96, 64, 4, emfExtPen(1, 0x10000, 8, blue), emfSelect(1), emfEmpty(EMRSaveDC), emfSelect(nullPen), emfDelete(1),
+			emfValue(EMRRestoreDC, -1), emfSelect(nullBrush), emfPoints(EMRPolyline, 10, 16, 86, 16),
+			emfExtPen(1, 0x10000, 8, magenta), emfDelete(1), emfPoints(EMRPolyline, 10, 40, 86, 40)),
+			probes: []probe{{48, 16, cBlue}, {48, 40, cBlue}, {48, 28, cWhite}}},
 		{name: "objects.wmf", data: sceneWMFObjects(), probes: []probe{{16, 16, cRed}, {4, 16, cBlue}, {48, 16, cOrange}, {80, 16, cMagenta}, {60, 44, cWhite}, {54, 38, qRed}, {78, 40, qGreen}, {82, 40, cWhite}, {20, 34, cBlack}}},
 	}
 }
@@ -581,9 +587,6 @@ func divergenceScenes() []renderScene {
 		{name: "lo-delete-selected.wmf", divergence: "a deleted selected brush stays active; playback releases it and uses the default brush",
 			data:   wmfDelete,
 			probes: []probe{{48, 32, cWhite}}, libreOffice: []probe{{48, 32, cBlue}}},
-		{name: "lo-restore-reused.emf", divergence: "RestoreDC reselects a pen whose slot was deleted and reused; playback falls back to the default pen",
-			data:   emfScene(96, 64, 4, emfExtPen(1, 0x10000, 8, blue), emfSelect(1), emfEmpty(EMRSaveDC), emfSelect(nullPen), emfDelete(1), emfExtPen(1, 0x10000, 8, magenta), emfValue(EMRRestoreDC, -1), emfSelect(nullBrush), emfPoints(EMRPolyline, 10, 30, 86, 30)),
-			probes: []probe{{48, 27, cWhite}, {48, 33, cWhite}}, libreOffice: []probe{{48, 27, cBlue}, {48, 33, cBlue}}},
 		{name: "lo-shape-edges.emf", divergence: "EMF RoundRect, ArcTo and Pie exclude their right and bottom edges",
 			data:   sceneShapeEdges(),
 			probes: []probe{{54, 50, cBlue}, {54, 44, cBlack}, {87, 57, cBlue}, {73, 45, cWhite}, {39, 40, cBlue}, {20, 53, cBlue}}, libreOffice: []probe{{39, 40, cWhite}, {20, 53, cWhite}}},

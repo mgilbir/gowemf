@@ -31,9 +31,11 @@ func defaultDeviceContext() deviceContext {
 	}
 }
 
-// objectRef is a selection. Slot-backed references remember the generation of
-// the object they selected so deleted or reused slots fall back to the stock
-// default (MS-EMF 3.1.1.1) instead of silently changing a restored selection.
+// objectRef is a selection. It holds the object itself, as a GDI device
+// context does: a saved state keeps its selections when their handles are
+// deleted or reused, and RestoreDC brings them back (ORACLES.md). Slot-backed
+// references remember the generation of the object they selected so that
+// deleting it replaces only that object's current selection.
 type objectRef struct {
 	slot       uint32
 	generation uint64
@@ -281,27 +283,6 @@ func (p *player) restore(n int32) {
 	// Stream has already validated the level against its own saved count.
 	p.dc = p.saved[level]
 	p.saved = p.saved[:level]
-	p.revalidate()
-}
-
-// revalidate replaces selections whose object was deleted or whose slot was
-// reused with the default stock objects (MS-EMF 3.1.1.1).
-func (p *player) revalidate() {
-	live := func(r objectRef) bool {
-		return r.stock || uint64(r.slot) < uint64(len(p.generations)) && p.generations[r.slot] == r.generation
-	}
-	if !live(p.dc.pen) {
-		p.dc.pen = stockRef(stockPens[1])
-	}
-	if !live(p.dc.brush) {
-		p.dc.brush = stockRef(stockBrushes[0])
-	}
-	if !live(p.dc.font) {
-		p.dc.font = stockRef(stockFonts[systemFont])
-	}
-	if s := p.dc.palette; s.selected && (uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation) {
-		p.dc.palette = paletteRef{}
-	}
 }
 
 func (p *player) create(r Record, id uint32, body any) error {
@@ -363,10 +344,26 @@ func (p *player) selectObject(r Record, id uint32) error {
 	return nil
 }
 
+// deleteObject empties a slot. A current selection of the deleted object
+// falls back to the default stock object (MS-EMF 3.1.1.1); selections held by
+// saved states are kept.
 func (p *player) deleteObject(id uint32) {
+	gen := p.generations[id]
 	p.objects[id] = playObject{}
 	p.generations[id]++
-	p.revalidate()
+	deleted := func(r objectRef) bool { return !r.stock && r.slot == id && r.generation == gen }
+	if deleted(p.dc.pen) {
+		p.dc.pen = stockRef(stockPens[1])
+	}
+	if deleted(p.dc.brush) {
+		p.dc.brush = stockRef(stockBrushes[0])
+	}
+	if deleted(p.dc.font) {
+		p.dc.font = stockRef(stockFonts[systemFont])
+	}
+	if s := p.dc.palette; s.selected && s.slot == id && s.generation == gen {
+		p.dc.palette = paletteRef{}
+	}
 }
 
 // clip combines area with the current clipping region.

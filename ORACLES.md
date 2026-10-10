@@ -162,7 +162,7 @@ curved-stroke solidity, exact clip combination and the comparison metric each
 have generated tests. It centers lines on device pixels using
 `Stroke.PixelCenter`.
 
-There are ten 96x64 agreement scenes. Four EMF scenes combine the requested
+There are eleven 96x64 agreement scenes. Four EMF scenes combine the requested
 features: nested save/restore with set, left- and right-multiplied and reset
 world transforms; anisotropic mappings with each and both axes reflected, an arc
 in reflected space, MM_LOMETRIC, inherited fixed extents and a pen scaled by the
@@ -175,7 +175,8 @@ partial-width and partial-height sources, BitBlt, NOTSRCCOPY, PATCOPY, constant
 and per-pixel alpha). Two WMF scenes cover the placeable mapping, reflected
 windows with SaveDC, lowest-free-slot reuse, geometric and hairline pens, and
 clipped DIB transfers. `arc-reflected.emf` and `.wmf` draw a counterclockwise
-chord under a reflected y axis, which EMF and WMF playback orient differently.
+chord under a reflected y axis, which EMF and WMF playback orient differently,
+and `restore-deleted.emf` restores a pen deleted while a saved state held it.
 
 Comparison is symmetric: each channel of every pixel must lie within 40/255 of
 the range spanned by the other image's 3x3 neighborhood, with at most 0.5% of
@@ -214,7 +215,6 @@ observed to draw; if LibreOffice changes, the test fails for review.
 | `lo-createpen-width.emf` | EMR_CREATEPEN width drawn as a hairline | Logical width (see COVERAGE.md) |
 | `lo-world-pen.emf` | Geometric pen not transformed by an anisotropic world transform | Pen follows the world transform under GM_ADVANCED |
 | `lo-delete-selected.emf`/`.wmf` | Deleted selected brush keeps painting | Default stock brush (MS-EMF 3.1.1.1) |
-| `lo-restore-reused.emf` | RestoreDC reselects a deleted pen by value | Default pen |
 | `lo-shape-edges.emf` | EMF RoundRect, ArcTo and a clockwise Pie built without their right and bottom edges | Edges included, as Windows' EMF playback does; LibreOffice includes them for Rectangle and Ellipse |
 | `lo-stretchdib-partial.emf`/`.wmf` | Partial StretchDIBits and StretchDIB sources measured from the top of the image | Measured from the bottom row in either row order, as Windows does |
 | `lo-winding.emf` | WINDING fill drawn as ALTERNATE | Nonzero fill |
@@ -521,6 +521,13 @@ Corrected after the comparison:
   against GDI, `bitmaps.emf` drops from 240 to 0 and the partial-source
   experiments (both row orders, EMF, and WMF played natively and converted)
   to 0.
+- Saved selections: a pen deleted while a saved state holds it comes back
+  with RestoreDC, in EMF whether or not its slot was reused meanwhile and in
+  WMF played natively; GDI and GDI+ draw the blue 8-unit line, not the
+  default pen (unmatched against GDI from 475 to 0, against GDI+ from 472 to
+  3). GDI restores a deleted logical palette the same way, and a
+  PALETTEINDEX brush then takes its entry; GDI+ uses the default palette. Deleting the current selection still
+  selects the default object (`lo-delete-selected.emf`/`.wmf`: 0).
 - Double-byte decoding (#21): a NUL after a lead byte is not taken as a trail
   byte; Windows yields the default character and then U+0000.
 - Compound pens with bevel joins (#20): GDI+ connects the inner sides of
@@ -540,8 +547,8 @@ Corrected after the comparison:
 Not settled by these runs: some earlier GDI scenes differ from Windows in
 ways not yet investigated. GDI and GDI+ draw nothing at all for
 `lo-mono-brush.emf`, which suggests a generated record they reject, and
-`lo-palette-index.emf` and `lo-restore-reused.emf` differ in content. They
-are left for a later comparison and are not claimed as agreement either way.
+`lo-palette-index.emf` differs in content. They are left for a later
+comparison and are not claimed as agreement either way.
 
 ## Decoder and playback extensions
 

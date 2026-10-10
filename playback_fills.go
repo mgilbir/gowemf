@@ -21,9 +21,11 @@ type paletteEntry struct {
 	flags byte
 }
 
-// paletteRef selects a logical palette. The generation detects deletion or
-// reuse of the slot after a saved state recorded the selection.
+// paletteRef selects a logical palette. Like objectRef it holds the palette
+// itself, which palette records still update through its slot; the
+// generation identifies the selection a deletion replaces.
 type paletteRef struct {
+	pal        *gdiPalette
 	slot       uint32
 	generation uint64
 	selected   bool
@@ -57,13 +59,9 @@ func (p *player) palette(slot uint32) *gdiPalette {
 }
 
 // selectedPalette returns the logical palette in the device context, or nil
-// when the default palette is selected or the selection is stale.
+// when the default palette is selected.
 func (p *player) selectedPalette() *gdiPalette {
-	s := p.dc.palette
-	if !s.selected || uint64(s.slot) >= uint64(len(p.generations)) || p.generations[s.slot] != s.generation {
-		return nil
-	}
-	return p.palette(s.slot)
+	return p.dc.palette.pal
 }
 
 func (p *player) selectPalette(id uint32) {
@@ -71,7 +69,7 @@ func (p *player) selectPalette(id uint32) {
 		p.dc.palette = paletteRef{} // DEFAULT_PALETTE
 		return
 	}
-	p.dc.palette = paletteRef{slot: id, generation: p.generations[id], selected: true}
+	p.dc.palette = paletteRef{pal: p.palette(id), slot: id, generation: p.generations[id], selected: true}
 }
 
 // updatePalette applies SetPaletteEntries, ResizePalette and AnimatePalette.

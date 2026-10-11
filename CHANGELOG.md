@@ -12,8 +12,9 @@ release notes are on the
   `ORACLES.md` into [`docs/`](docs/index.md), with one canonical section per
   specification ruling. The old files now redirect.
 - New guides for rendering with `Play`, inspecting records, and images and
-  color. New references for limits, errors and `gowemfdump`. Architecture and
-  test-tier diagrams.
+  color. New references for limits, errors and `gowemfdump`. Diagrams of the
+  architecture, coordinate spaces, embedded metafile playback, test tiers and
+  the Windows oracle run.
 - The package documentation now describes `Play`. `PlayOptions.ColorTransform`
   and `PlayOptions.Images` are documented.
 - Statements that custom line caps and bidirectional text had not been

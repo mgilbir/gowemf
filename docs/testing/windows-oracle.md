@@ -8,6 +8,20 @@ evidence behind a ruling.
 
 ## Running it
 
+```mermaid
+sequenceDiagram
+    participant L as Go tests (any OS)
+    participant W as oracle.ps1 on Windows
+    participant G as GDI / GDI+
+    L->>L: TestWriteWindowsInputs in both modules<br/>(GOWEMF_WINDOWS_INPUTS) → scenes + manifest.json
+    L->>W: copy the input directories
+    W->>G: extract hatch patterns, MultiByteToWideChar dumps
+    W->>G: record rec-*.emf with GDI+ from the first input directory
+    W->>G: render every scene: GDI+, GDI (PlayEnhMetaFile),<br/>GDI WMF (PlayMetaFile)
+    W->>L: copy the output directory back under .external/
+    L->>L: TestCompareWindows* (GOWEMF_WINDOWS_OUT):<br/>decoding asserts, image comparisons log + montages
+```
+
 1. On Linux or Windows, write the generated inputs:
    `GOWEMF_WINDOWS_INPUTS=<dir>/in go test -run TestWriteWindowsInputs .`
    and, from `rendercheck/`,

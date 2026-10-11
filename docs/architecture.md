@@ -51,6 +51,35 @@ Backend calls happen as records play, so a later failure can follow
 output that was already drawn. When output must be all-or-nothing, run
 `Stream(data, opts.Stream, nil)` first (see [errors](reference/errors.md)).
 
+## Coordinate spaces
+
+Every drawing record is mapped to destination coordinates by one affine
+matrix, composed from the current state when the record plays. GDI and EMF+
+records compose different chains; both end in the same device-to-destination
+mapping, fixed when playback starts.
+
+```mermaid
+flowchart LR
+    subgraph gdi["GDI record (WMF, EMF, EMF+ GetDC)"]
+      L["logical"] -->|"world transform<br/>(EMF only)"| PG["page"]
+      PG -->|"window → viewport<br/>(mapping mode)"| DV["device"]
+    end
+    subgraph plus["EMF+ record"]
+      WD["world"] -->|"world transform"| CT["container"]
+      CT -->|"container transforms"| PP["page"]
+      PP -->|"page unit × page scale<br/>(header DPI)"| DP["device pixels"]
+      DP -->|"+½ pixel unless PixelOffsetMode<br/>is Half or HighQuality"| DV
+    end
+    DV -->|"EMF: frame → Destination<br/>WMF: identity"| D["destination"]
+```
+
+For an EMF, device units are reference-device pixels (szlMillimeters over
+szlDevice), and the header frame is scaled onto `PlayOptions.Destination`.
+For a WMF the device is the destination itself: the placeable bounds are the
+initial window and `Destination` the viewport, so the device-to-destination
+step is the identity ([device units](interpretations/gdi.md#device-units-and-the-destination),
+[EMF+ coordinate spaces](interpretations/emfplus.md#coordinate-spaces-and-page-units)).
+
 ## Backend capabilities
 
 A backend implements `Backend` and may add optional interfaces. `Play`

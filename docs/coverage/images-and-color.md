@@ -3,7 +3,7 @@
 Which bitmap encodings `ParseDIB`, `ParsePackedDIB`, `PlusImage.Image` and
 `ParseTIFF` decode, and what the golittlecms color adapter converts. Reach for
 this before handing a decoded image to a renderer or when a color-managed
-image is rejected. Limits are in the [README resource model](../../README.md#resource-model).
+image is rejected. Limits are in [limits](../reference/limits.md).
 
 ## Pixel decoding
 

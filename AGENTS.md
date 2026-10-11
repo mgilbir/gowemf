@@ -14,7 +14,10 @@
   retain required legal notices. Use GPL/MPL renderers as execution-only oracles,
   without reading or porting their implementation source.
 - Run `make check` for code changes, `make fuzz` for parser changes, and
-  `make test-external` for framing/corpus changes. Report unavailable checks.
+  `make test-external` for framing/corpus changes. `make check` covers only the
+  root module: also run `make rendercheck-vet` for exported-API or playback
+  changes, and `make test-render` when its tools are available. Report
+  unavailable checks.
   Prove new regression assertions detect the defect they are meant to watch.
 - Filesystem access is limited to this repository and `/tmp`. To inspect another
   project, check it out from GitHub into `/tmp`; do not commit to that checkout.

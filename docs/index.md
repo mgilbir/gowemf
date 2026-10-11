@@ -23,5 +23,6 @@ the library and its API.
 | See LibreOffice agreement and its pinned divergences | [LibreOffice oracle](testing/libreoffice-oracle.md) |
 | Re-run or read the Windows GDI/GDI+ comparison | [Windows oracle](testing/windows-oracle.md) |
 | Judge how strong a regression test is | [Regression log](testing/regression-log.md) |
+| See what changed between releases | [CHANGELOG.md](../CHANGELOG.md) |
 | Check third-party licenses | [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) |
 | Follow the project's contribution rules | [AGENTS.md](../AGENTS.md) |

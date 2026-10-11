@@ -98,6 +98,7 @@ The [documentation index](docs/index.md) routes questions to documents:
   [EMF+](docs/interpretations/emfplus.md) and
   [decoding](docs/interpretations/decoding.md) interpretations.
 - How it is checked: [testing and oracles](docs/testing/README.md).
+- What changed: [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 

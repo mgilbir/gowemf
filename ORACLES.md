@@ -260,8 +260,14 @@ defects (palette byte order, PALETTERGB, AnimatePalette scope, monochrome
 colors, frame erosion and orientation, RECT_V, WMF scans, DIB_PAL_COLORS,
 region work budget, multi-rectangle regions and WMF clip regions) were each
 caught by the offline tests; those touching a scene also fail its probes.
-The pinned corpus now plays without reported omissions once a text backend is
-present, including the monochrome DIB_PAL_INDICES brushes of `nested_wmf.emf`.
+With a text backend and a stated DEFAULT_CHARSET, the GDI records of the
+pinned corpus play without reported omissions, including the monochrome
+DIB_PAL_INDICES brushes of `nested_wmf.emf`; `make test-external` asserts
+this. EMF+ playback of `nested_wmf.emf` reports 52 omissions: its embedded
+WMF creates BS_PATTERN brushes with META_DIBCREATEPATTERNBRUSH records whose
+Target is a DIB. MS-WMF 2.3.4.8 defines Target as a DIB Object, but its
+brush table says a BS_PATTERN brush contains a Bitmap16, which playback
+follows. The test pins that report until the conflict is settled.
 
 ### Raster operation scenes
 

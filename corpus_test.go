@@ -5,12 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/mgilbir/gowemf/internal/corpus"
 )
+
+// knownPlusOmissions pins what EMF+ playback of the pinned corpus reports
+// with a text backend and a stated DEFAULT_CHARSET. The embedded WMF of
+// nested_wmf.emf creates BS_PATTERN brushes with META_DIBCREATEPATTERNBRUSH
+// whose Target is a DIB; MS-WMF 2.3.4.8 calls Target a DIB Object, but its
+// brush table says a BS_PATTERN brush contains a Bitmap16, which playback
+// follows (ORACLES.md). A change here needs review, not a new expectation.
+var knownPlusOmissions = map[string]map[string]int{
+	"slideshow/nested_wmf.emf": {"embedded metafile: malformed Bitmap16 pattern brush": 52},
+}
 
 func TestExternalCorpus(t *testing.T) {
 	if os.Getenv("GOWEMF_EXTERNAL") != "1" {
@@ -139,6 +150,9 @@ func TestExternalCorpus(t *testing.T) {
 				t.Fatal("text playback geometry:", text.recordingBackend.bad)
 			}
 			t.Logf("text playback: %d runs; unsupported: %v", len(text.drawn), skipped)
+			if len(skipped) != 0 {
+				t.Fatalf("text playback reported omissions: %v", skipped)
+			}
 			if h.EMFPlus == nil {
 				return
 			}
@@ -153,6 +167,9 @@ func TestExternalCorpus(t *testing.T) {
 				t.Fatal("EMF+ playback geometry:", native.recordingBackend.bad)
 			}
 			t.Logf("EMF+ playback: %d fills, %d strokes, %d images, %d text runs; unsupported: %v", len(native.fills), len(native.strokes), len(native.images), len(native.drawn), skipped)
+			if want := knownPlusOmissions[f.Path]; !maps.Equal(skipped, want) {
+				t.Fatalf("EMF+ playback omissions %v, want %v", skipped, want)
+			}
 		})
 	}
 }

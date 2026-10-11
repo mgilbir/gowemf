@@ -255,9 +255,11 @@ type UnsupportedOperation struct {
 //
 // CustomLineCaps draws EMF+ custom and adjustable-arrow line caps under an
 // interpretation of geometry that neither MS-EMFPLUS nor Microsoft's GDI+
-// reference defines (see COVERAGE.md). It matches GDI+ for an adjustable
+// reference defines (docs/interpretations/emfplus.md#line-caps-and-custom-caps). It
+// matches GDI+ for an adjustable
 // arrow, a fill-path end cap and a stroke-path start cap recorded by GDI+
-// itself (ORACLES.md). When false, such caps are reported unsupported.
+// itself (docs/testing/windows-oracle.md). When false, such caps are reported
+// unsupported.
 //
 // Unsupported is called for each operation that cannot be drawn faithfully.
 // If it is nil, Play stops with an ErrUnsupported error. If it returns nil,
@@ -294,7 +296,8 @@ var errSkip = errors.New("gowemf: skipped unsupported operation")
 // the GDI records inside GetDC intervals; PlayOptions.Stream.PreferGDI
 // selects the GDI fallback of EMF+ Dual files instead. Flood fill, EMF+
 // DrawString and other unimplemented operations are reported through
-// PlayOptions.Unsupported; see COVERAGE.md for the inventory.
+// PlayOptions.Unsupported; see docs/coverage in the repository for the
+// inventory.
 //
 // Like Stream, backend calls can precede a later failure. Validate first with
 // Stream(data, options.Stream, nil) when output must be transactional.
@@ -459,9 +462,9 @@ func emfFrame(e *EMFHeader) (pixelMM Point, left, top, w, ht float64, err error)
 	}
 	pixelMM = Point{float64(e.Millimeters.X) / float64(e.Device.X), float64(e.Millimeters.Y) / float64(e.Device.Y)}
 	// szlMicrometers (MS-EMF 2.2.11) is not used: Windows GDI and GDI+
-	// place pictures by szlMillimeters even where szlMicrometers refines it
-	// (see ORACLES.md), and writers also store values in it that are not the
-	// device size at all.
+	// place pictures by szlMillimeters even where szlMicrometers refines it,
+	// and writers also store values in it that are not the device size at
+	// all (docs/interpretations/gdi.md#device-units-and-the-destination).
 	// The picture frame is in .01 mm; convert it to reference-device pixels.
 	f := e.Frame
 	left, top = float64(f.Left)/100/pixelMM.X, float64(f.Top)/100/pixelMM.Y

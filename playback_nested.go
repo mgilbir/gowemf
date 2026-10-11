@@ -40,7 +40,8 @@ type embeddedMetafile struct {
 // MS-EMFPLUS defines no pixel grid for a metafile image. GDI+, recording and
 // drawing such images, uses the logical units of placeable WMF bounds, and
 // for an EMF the frame in reference-device pixels plus one: the frame fills
-// an image one pixel wider and taller (ORACLES.md).
+// an image one pixel wider and taller
+// (docs/interpretations/emfplus.md#metafile-images).
 func (p *player) metafileImage(r Record, obj *plusObject, img PlusImage) (*embeddedMetafile, error) {
 	if obj.metafile != nil {
 		return obj.metafile, nil

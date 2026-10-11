@@ -18,7 +18,8 @@ import (
 // nested_wmf.emf creates BS_PATTERN brushes with META_DIBCREATEPATTERNBRUSH
 // whose Target is a DIB; MS-WMF 2.3.4.8 calls Target a DIB Object, but its
 // brush table says a BS_PATTERN brush contains a Bitmap16, which playback
-// follows (ORACLES.md). A change here needs review, not a new expectation.
+// follows (docs/testing/README.md#pinned-corpus). A change here needs
+// review, not a new expectation.
 var knownPlusOmissions = map[string]map[string]int{
 	"slideshow/nested_wmf.emf": {"embedded metafile: malformed Bitmap16 pattern brush": 52},
 }

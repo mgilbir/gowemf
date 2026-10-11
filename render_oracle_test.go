@@ -310,7 +310,8 @@ func TestLibreOfficeRenderOracle(t *testing.T) {
 				return
 			}
 			// Observed with LibreOffice 24.2.7.2. Any version must still show
-			// the recorded pixels; a change requires reviewing ORACLES.md.
+			// the recorded pixels; a change requires reviewing
+			// docs/testing/libreoffice-oracle.md.
 			for _, p := range s.libreOffice {
 				if err := probeColor(lo, p); err != nil {
 					t.Errorf("LibreOffice %s behavior changed (%s); review the pinned divergence: %v", version, s.divergence, err)

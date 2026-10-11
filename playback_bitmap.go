@@ -166,7 +166,7 @@ func (p *player) blit(b blit) error {
 			return p.unsupported(b.r, "lower-left source origin in a top-down DIB")
 		}
 		// StretchDIBits measures the source from the bottom row of the
-		// image in either row order (ORACLES.md).
+		// image in either row order (docs/interpretations/gdi.md#bitmap-source-origins).
 		b.src.Y = float64(d.height) - b.src.Y - b.srcSize.Y
 	}
 	if err := p.spendPixels(b.r, d.width, d.height); err != nil {

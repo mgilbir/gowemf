@@ -91,7 +91,8 @@ func (c *dbcsCodePage) load() {
 // double-byte code page: a byte that is not a lead byte maps on its own; a
 // lead byte and a mapped trail byte form one character; otherwise the
 // default character replaces the lead byte and the byte after it, unless
-// that byte is NUL, which Windows' MultiByteToWideChar keeps (ORACLES.md).
+// that byte is NUL, which Windows' MultiByteToWideChar keeps
+// (docs/interpretations/gdi.md#double-byte-text).
 // spans gives the number of bytes each output unit came from.
 func (c *dbcsCodePage) decode(b []byte) (out []uint16, spans []int) {
 	c.load()

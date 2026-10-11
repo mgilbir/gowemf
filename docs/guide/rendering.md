@@ -8,6 +8,9 @@ together is in the [architecture](../architecture.md).
 
 ## Minimal playback
 
+`ExamplePlay` ([example_play_test.go](../../example_play_test.go)) is a
+runnable version of this snippet.
+
 ```go
 type canvas struct{ /* your renderer */ }
 

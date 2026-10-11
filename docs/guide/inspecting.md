@@ -8,6 +8,10 @@ instead, see [rendering with Play](rendering.md).
 
 ## Walk: framing
 
+Runnable versions of the snippets below are `ExampleWalk` and `ExampleStream`
+([example_walk_test.go](../../example_walk_test.go),
+[example_stream_test.go](../../example_stream_test.go)).
+
 ```go
 header, err := gowemf.Walk(data, gowemf.Limits{}, func(r gowemf.Record) error {
 	// r.Format selects the namespace for r.Type.

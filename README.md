@@ -52,7 +52,9 @@ Add `MeasureText` and `DrawText` (`TextBackend`) to receive text,
 (`RasterBackend`) for raster operations that read the destination. Without
 an `Unsupported` callback, `Play` stops with `ErrUnsupported` at the first
 operation it cannot draw. The [rendering guide](docs/guide/rendering.md)
-explains each call.
+explains each call; `ExamplePlay` in
+[example_play_test.go](example_play_test.go) is a runnable version that builds
+a one-rectangle EMF in code.
 
 ## What it supports
 

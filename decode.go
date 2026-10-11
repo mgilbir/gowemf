@@ -217,7 +217,7 @@ type Comment struct {
 // Decode returns a typed record body after checking its layout, array lengths,
 // offsets and finite floats. It does not perform playback or validate object
 // references against a stream. The result's concrete types are documented in
-// COVERAGE.md. Unsupported encodings return ErrUnsupported, never a success
+// docs/coverage/decoding.md. Unsupported encodings return ErrUnsupported, never a success
 // containing an opaque drawing body. Raw is authoritative; Data is not trusted.
 func Decode(r Record, limits DecodeLimits) (any, error) {
 	l := limits.defaults()

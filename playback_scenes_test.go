@@ -64,7 +64,8 @@ func emfScene(w, h int32, handles uint16, records ...[]byte) []byte {
 
 // wmfScene adds a placeable header whose bounds cover w x h logical units.
 // The META_HEADER type is MEMORYMETAFILE: LibreOffice 24.2 renders the
-// equally valid DISKMETAFILE type blank (see ORACLES.md).
+// equally valid DISKMETAFILE type blank
+// (see docs/testing/libreoffice-oracle.md#setup-and-metric).
 func wmfScene(w, h int16, slots uint16, records ...Record) []byte {
 	place := make([]byte, 22)
 	put32(place, 0, 0x9ac6cdd7)
@@ -259,7 +260,8 @@ func agreementScenes() []renderScene {
 		{name: "bitmaps.emf", data: sceneBitmaps(), probes: []probe{{5, 5, qRed}, {25, 5, qGreen}, {5, 15, qBlue}, {25, 15, qYellow}, {67, 3, cBlack}, {60, 5, qRed}, {40, 5, qGreen}, {72, 4, qRed}, {72, 14, color.NRGBA{25, 225, 225, 255}}, {6, 24, qGreen}, {6, 32, qYellow}, {35, 27, cOrange}, {45, 38, color.NRGBA{148, 158, 238, 255}}, {45, 30, color.NRGBA{243, 79, 15, 255}}, {80, 36, cRed}, {88, 36, cWhite}}},
 		{name: "mapping.wmf", data: sceneWMFMapping(), probes: []probe{{41, 40, cRed}, {66, 24, cBlue}, {18, 54, cBlue}, {34, 54, cRed}, {82, 11, cRed}}},
 		// A counterclockwise chord under a reflected y axis: EMF applies the
-		// arc direction in logical space and WMF in device space (ORACLES.md).
+		// arc direction in logical space and WMF in device space
+		// (docs/interpretations/gdi.md#graphics-mode-and-shape-construction).
 		{name: "arc-reflected.emf", data: emfScene(96, 64, 4, emfSelect(nullPen), emfBrush(1, 0, blue), emfSelect(1), emfValue(EMRSetMapMode, 2), emfPoint(EMRSetViewportOrgEx, 0, 64), emfArc(EMRChord, 10, 10, 170, 90, 170, 50, 10, 50)),
 			probes: []probe{{36, 36, cWhite}, {36, 52, cBlue}}},
 		{name: "arc-reflected.wmf", data: wmfScene(96, 64, 2, wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96),

@@ -134,7 +134,8 @@ func TestPlayPaletteDIBs(t *testing.T) {
 func TestPlayMonochromeBrushes(t *testing.T) {
 	// A 2x2 checkerboard, rows 01 and 10, stored bottom-up: set bits take
 	// the background color and clear bits the text color, unless GDI's
-	// handling of the usage and color table says otherwise (ORACLES.md).
+	// handling of the usage and color table says otherwise
+	// (docs/interpretations/gdi.md#monochrome-pattern-brushes).
 	bits := []byte{0x80, 0, 0, 0, 0x40, 0, 0, 0}
 	mono := func(h int32, usage int32, table ...byte) []byte {
 		info := cat(dibHeader(2, h, 1, 0), table)

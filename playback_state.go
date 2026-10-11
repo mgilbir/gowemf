@@ -33,7 +33,8 @@ func defaultDeviceContext() deviceContext {
 
 // objectRef is a selection. It holds the object itself, as a GDI device
 // context does: a saved state keeps its selections when their handles are
-// deleted or reused, and RestoreDC brings them back (ORACLES.md). Slot-backed
+// deleted or reused, and RestoreDC brings them back
+// (docs/interpretations/gdi.md#deleted-and-saved-selections). Slot-backed
 // references remember the generation of the object they selected so that
 // deleting it replaces only that object's current selection.
 type objectRef struct {
@@ -180,7 +181,7 @@ func newBrush(r Record, v any, limits DecodeLimits) *gdiBrush {
 		if r.Type == EMRCreateMonoBrush {
 			// GDI creates no monochrome brush from a top-down DIB, so the
 			// slot stays empty and selecting it keeps the previous brush
-			// (ORACLES.md).
+			// (docs/interpretations/gdi.md#monochrome-pattern-brushes).
 			if len(b.Info) >= 12 && u32(b.Info) >= 40 && int32(u32(b.Info[8:])) < 0 {
 				return nil
 			}
@@ -294,7 +295,8 @@ func (p *player) restore(n int32) {
 // beyondTable reports the EMF object index equal to the header's Handles
 // count. MS-EMF 3.1.1.1 sizes the table for it, but Windows counts the
 // reserved index zero among the Handles: creating an object there fails, and
-// records that use the index do nothing (ORACLES.md).
+// records that use the index do nothing
+// (docs/interpretations/gdi.md#the-object-index-equal-to-handles).
 func (p *player) beyondTable(id uint32) bool {
 	return p.format == EMF && uint64(id)+1 == uint64(len(p.objects))
 }

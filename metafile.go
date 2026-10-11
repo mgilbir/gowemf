@@ -6,7 +6,7 @@
 // coordinates. Rasterization, font realization and shaping belong to the
 // backend. Operations Play cannot draw faithfully are reported, never
 // skipped silently. It also decodes supported bitmap encodings. See
-// COVERAGE.md for the supported records and explicit limits.
+// docs/index.md in the repository for coverage, interpretations and testing.
 package gowemf
 
 import (

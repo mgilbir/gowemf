@@ -1,4 +1,4 @@
-# Windows GDI/GDI+ oracle run (ORACLES.md, "Windows GDI and GDI+"). It is
+# Windows GDI/GDI+ oracle run (docs/testing/windows-oracle.md). It is
 # not part of CI. On Windows, with Go installed:
 #   $env:GOWEMF_WINDOWS_INPUTS = "$env:TEMP\in"; go test -run TestWriteWindowsInputs .
 #   cd rendercheck; $env:GOWEMF_WINDOWS_INPUTS = "$env:TEMP\text"; go test -run TestWriteWindowsInputs .

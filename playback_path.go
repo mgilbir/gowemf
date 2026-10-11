@@ -198,7 +198,8 @@ const (
 // Under GM_ADVANCED it is world space, where the edges are included and a
 // reflection reverses the displayed arc direction. Windows constructs EMF
 // shapes as under GM_ADVANCED even with an identity world transform
-// (ORACLES.md), so only WMF uses GM_COMPATIBLE here.
+// (docs/interpretations/gdi.md#graphics-mode-and-shape-construction), so only WMF
+// uses GM_COMPATIBLE here.
 type boxSpace struct {
 	s          shape  // box space to destination
 	toBox      Matrix // logical to box space

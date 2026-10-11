@@ -674,7 +674,8 @@ func (p *player) plusCompound(r Record, pen PlusPen, s *Stroke) error {
 		return p.unsupported(r, "EMF+ zero-width compound pen")
 	case pen.Join == 1:
 		// GDI+ joins the inner sides of bevelled band edges with crossing
-		// connectors, which reach into the gaps between bands (ORACLES.md).
+		// connectors, which reach into the gaps between bands
+		// (docs/testing/windows-oracle.md#compound-pens-with-bevel-joins).
 		return p.unsupported(r, "EMF+ compound pen with bevel joins")
 	case pen.LineStyle != 0:
 		return p.unsupported(r, "EMF+ dashed compound pen")
@@ -1197,7 +1198,7 @@ func (p *player) plusImage(c Command, v PlusImageDraw) error {
 		// Pixels outside the image come from the attributes' wrap mode;
 		// only transparent clamping matches drawing the image alone. Without
 		// attributes, Windows GDI+ draws nothing outside the image, as with
-		// transparent clamping (ORACLES.md).
+		// transparent clamping (docs/interpretations/emfplus.md#metafile-images).
 		clamped := true
 		if v.AttributesID != 0xffffffff {
 			a, err := p.plusObjectAt(r, v.AttributesID)

@@ -478,7 +478,8 @@ func TestPlayBuildsPaths(t *testing.T) {
 	}
 	// A reflecting page mapping reverses the displayed direction of EMF arcs,
 	// chords, pies and ArcTo, which apply the arc direction in logical space;
-	// WMF arcs keep it in device space (ORACLES.md).
+	// WMF arcs keep it in device space
+	// (docs/interpretations/gdi.md#graphics-mode-and-shape-construction).
 	lometric := [][]byte{emfValue(EMRSetMapMode, 2), emfPoint(EMRSetViewportOrgEx, 0, 64)}
 	wmfFlip := []Record{wmfRec(MetaSetMapMode, 8), wmfRec(MetaSetWindowOrg, 0, 0), wmfRec(MetaSetWindowExt, 64, 96), wmfRec(MetaSetViewportOrg, 64, 0), wmfRec(MetaSetViewportExt, -64, 96)}
 	below := func(p Path) bool { // the figure lies below its first point

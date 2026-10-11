@@ -8,7 +8,7 @@ package gowemf
 //
 // The values were extracted from Windows GDI+ 10.0.26100.33438 (Windows
 // Server 2025) by tools/windows/oracle.ps1, filling black on white with
-// every style; see ORACLES.md.
+// every style; see docs/testing/windows-oracle.md#hatch-styles.
 var plusHatchCoverage = [53][8][8]uint8{
 	{ // 0
 		{255, 255, 255, 255, 255, 255, 255, 255},

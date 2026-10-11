@@ -872,7 +872,7 @@ func (p *player) brushPaint(r Record, g *gdiBrush, m Matrix, applyROP2 bool) (*P
 // stroke resolves the selected pen. A geometric pen is a circle of its
 // width in logical units, transformed with the world and page mapping: an
 // anisotropic mapping draws it as an ellipse, as Windows does in EMF and WMF
-// (ORACLES.md).
+// (docs/interpretations/gdi.md#pen-widths).
 func (p *player) stroke(r Record, m Matrix) (*Stroke, error) {
 	g := p.dc.pen.pen
 	if g == nil || g.null {

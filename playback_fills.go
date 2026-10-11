@@ -34,7 +34,7 @@ type paletteRef struct {
 // Palette entries are PALETTEENTRY values: red, green, blue, flags. MS-WMF
 // 2.2.2.13 specifies this order; MS-EMF 2.2.18 draws LogPaletteEntry as
 // reserved, blue, green, red, but EMR palette records serialize the same GDI
-// structure (see ORACLES.md for the oracle evidence).
+// structure (docs/interpretations/gdi.md#palette-entries-and-palette-colors).
 func (p *player) readEntries(r Record, b []byte, n uint32) ([]paletteEntry, error) {
 	if err := p.spendPixels(r, int(n), 1); err != nil {
 		return nil, err
@@ -192,10 +192,10 @@ func (m *monoPattern) image(p *player, r Record, fg, bg color.NRGBA) (*image.NRG
 var monoIndexPalette = []color.NRGBA{{A: 255}, {255, 255, 255, 255}}
 
 // monoBrushPattern decodes an EMR_CREATEMONOBRUSH bitmap, whose colors the
-// DC supplies. As GDI does (ORACLES.md), a DIB_PAL_INDICES bitmap's bits are
-// used as they are, a DIB_RGB_COLORS bitmap's bits are inverted unless its
-// second color is the brighter, and a DIB_PAL_COLORS bitmap paints only the
-// text color.
+// DC supplies. As GDI does, a DIB_PAL_INDICES bitmap's bits are used as they
+// are, a DIB_RGB_COLORS bitmap's bits are inverted unless its second color is
+// the brighter, and a DIB_PAL_COLORS bitmap paints only the text color
+// (docs/interpretations/gdi.md#monochrome-pattern-brushes).
 func (p *player) monoBrushPattern(r Record, g *gdiBrush) (*monoPattern, error) {
 	// The bits do not depend on the color table; only DIB_RGB_COLORS reads it.
 	usage, logical := uint32(2), monoIndexPalette

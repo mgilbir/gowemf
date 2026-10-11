@@ -236,11 +236,17 @@ type UnsupportedOperation struct {
 	Reason string
 }
 
-// PlayOptions configures GDI playback. Destination is the rectangle receiving
+// PlayOptions configures GDI and EMF+ playback. Destination is the rectangle receiving
 // the picture: the EMF header frame or the WMF placeable bounds are mapped
 // onto it. WMF input without a placeable header requires Placeable. Zero
 // limits select defaults: 4,000,000 points per path, 64,000,000 cumulative
 // decoded bitmap pixels and 4,096 clip steps per region chain.
+//
+// Images bounds each bitmap Play decodes, as for ParseDIB and
+// PlusImage.Image. ColorTransform converts color-managed bitmaps (V4/V5 DIB
+// color spaces, ICC-tagged EMF+ TIFF images) to sRGB; NewColorTransform is the
+// golittlecms implementation. With a nil ColorTransform such bitmaps are
+// reported unsupported.
 //
 // DefaultCharSet is the CharacterSet that DEFAULT_CHARSET fonts resolve to on
 // the producing system; nil reports such ANSI text unsupported rather than
@@ -248,9 +254,10 @@ type UnsupportedOperation struct {
 // TextBackend.
 //
 // CustomLineCaps draws EMF+ custom and adjustable-arrow line caps under an
-// interpretation that has not been verified against Windows, because neither
-// MS-EMFPLUS nor Microsoft's GDI+ reference defines their geometry (see
-// COVERAGE.md). When false, such caps are reported unsupported.
+// interpretation of geometry that neither MS-EMFPLUS nor Microsoft's GDI+
+// reference defines (see COVERAGE.md). It matches GDI+ for an adjustable
+// arrow, a fill-path end cap and a stroke-path start cap recorded by GDI+
+// itself (ORACLES.md). When false, such caps are reported unsupported.
 //
 // Unsupported is called for each operation that cannot be drawn faithfully.
 // If it is nil, Play stops with an ErrUnsupported error. If it returns nil,
@@ -284,10 +291,10 @@ var errSkip = errors.New("gowemf: skipped unsupported operation")
 // clipping); for EMF+ records, the GDI+ graphics state (world and page
 // transforms, containers, clipping and objects). It resolves drawing records
 // into destination-space operations. EMF+ files play their EMF+ records, plus
-// the GDI records inside GetDC intervals; Stream.PreferGDI selects the GDI
-// fallback of EMF+ Dual files instead. Flood fill, EMF+ text and other
-// unimplemented operations are reported through PlayOptions.Unsupported; see
-// COVERAGE.md for the inventory.
+// the GDI records inside GetDC intervals; PlayOptions.Stream.PreferGDI
+// selects the GDI fallback of EMF+ Dual files instead. Flood fill, EMF+
+// DrawString and other unimplemented operations are reported through
+// PlayOptions.Unsupported; see COVERAGE.md for the inventory.
 //
 // Like Stream, backend calls can precede a later failure. Validate first with
 // Stream(data, options.Stream, nil) when output must be transactional.

@@ -1,8 +1,12 @@
-// Package gowemf parses WMF, EMF and embedded EMF+ containers, decodes supported
-// record families, and streams typed commands with object/state checks. It also
-// decodes supported bitmap encodings. Walk checks framing only; Decode and Stream
-// provide progressively stronger checks. Vector playback and text shaping belong
-// to the consumer. See COVERAGE.md for the supported records and explicit limits.
+// Package gowemf parses and plays WMF, EMF and EMF+ metafiles. It works in
+// layers, each checking more than the last: Walk checks framing only; Decode
+// and Stream decode typed records and check objects, saved states and path
+// brackets; Play keeps the GDI device context and GDI+ graphics state and
+// hands a Backend fills, strokes, images and positioned text in destination
+// coordinates. Rasterization, font realization and shaping belong to the
+// backend. Operations Play cannot draw faithfully are reported, never
+// skipped silently. It also decodes supported bitmap encodings. See
+// COVERAGE.md for the supported records and explicit limits.
 package gowemf
 
 import (

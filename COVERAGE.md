@@ -276,7 +276,8 @@ Interpretations where the specifications leave room or conflict:
   the SRCAND bitmap is white, and that bitmap is only black and white, the
   pair is exactly the image with the mask's black pixels opaque and its
   white pixels transparent, and is drawn so. Otherwise both are reported, in
-  record order. PolyDraw, PolylineTo and the "To" records continue from the current
+  record order.
+- PolyDraw, PolylineTo and the "To" records continue from the current
   position, starting a new figure after a closed one.
 - Text placement: EMF text records state their own graphics mode, which
   selects GM_COMPATIBLE (device space, upright, only the height scaled by the
@@ -305,7 +306,8 @@ Interpretations where the specifications leave room or conflict:
   laid right to left. MS-EMF 2.1.11 and MS-WMF 2.1.2.3 add that right-to-left
   reading order SHOULD apply only with a Hebrew or Arabic font; the flag is
   honored with every font, because the same definitions say the text MUST be
-  laid out right to left. None of this has been checked against Windows.
+  laid out right to left. Windows GDI places `text-bidi.emf` in the same
+  order and positions (ORACLES.md).
 - Double-byte ANSI text decodes as MS-UCODEREF 3.1.5.1.1 specifies: a lead
   byte with an unmapped trail byte becomes the code page's default
   character in place of both bytes; a lead byte at the end, or before a NUL,
@@ -352,7 +354,7 @@ saved states; the chain length is bounded across the clip and metaregions.
 
 ## EMF+ playback
 
-`Play` interprets EMF+ records by default; `StreamOptions.PreferGDI` selects
+`Play` interprets EMF+ records by default; `PlayOptions.Stream.PreferGDI` selects
 the GDI fallback of a Dual file instead. GDI records inside GetDC intervals are
 played by the GDI player, with its own device context.
 
@@ -361,7 +363,7 @@ played by the GDI player, with its own device context.
 | State | Save/Restore, BeginContainer (World or Pixel units) and BeginContainerNoParams, EndContainer; Set/Reset/Multiply/Translate/Scale/RotateWorldTransform in prepend and append order; SetPageTransform in Pixel, Point, Inch, Document and Millimeter units; pixel offset, interpolation and compositing modes; rendering origin. Anti-aliasing, text hints and compositing quality are backend policy. | Display and World page units; containers in physical units (their contents are skipped as a unit); SetTSGraphics and SetTSClip |
 | Clipping | SetClipRect, SetClipPath, SetClipRegion with all six combine modes; region trees with every node type; ResetClip, OffsetClip; container clips as metaregions | — |
 | Brushes | Solid colors with alpha, hatch styles 0–52 with GDI+'s patterns, texture brushes (bitmap images, brush transform, all five wrap modes), linear gradients (two colors, blend factors, preset colors; tile and mirrored wraps), path gradient fills through a `GradientBackend` (path boundary star-shaped from its center, one surrounding color or one per vertex, preset colors, blend factors with one surrounding color, brush transform, clamped) | Translucent hatches with anti-aliased patterns (styles 2, 3 and 5), metafile textures, linear gradients that are gamma corrected, clamped, have vertical blend factors or stops of differing alpha; path gradients with point (cardinal spline) boundaries, blend factors with several surrounding colors, focus scales, gamma correction, tiled wraps, several figures or non-star-shaped boundaries, and path gradients on pens and text |
-| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (an unverified interpretation; see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter and round joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel joins or dashes, open-figure caps or mitered corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
+| Pens | World and Pixel widths, pen transform, flat/square/round caps chosen separately for start and end, NoAnchor and SquareAnchor caps, custom path and adjustable-arrow caps with `PlayOptions.CustomLineCaps` (see below), miter/bevel/round joins, miter limit, predefined and custom dashes with offset, symmetric compound lines with miter and round joins, any supported brush | Custom and adjustable-arrow caps without `CustomLineCaps`, or with translucent paint, dashes, compound or zero-width pens, inconsistent cap data or insets past a line segment; triangle, round, diamond and arrow anchor caps, dashed pens with non-flat line caps, asymmetric compound lines, compound lines with bevel joins or dashes, open-figure caps or mitered corners past the miter limit, clipped miter joins, alignments other than center, dash caps, dashed zero-width pens, other width units |
 | Geometry | FillRects/DrawRects, FillPolygon/DrawLines (closed and open), FillEllipse/DrawEllipse, FillPie/DrawPie/DrawArc, FillPath/DrawPath, FillRegion, cardinal splines (open with offset and segments, closed, winding or alternate fill), DrawBeziers, Clear; compressed and relative points | — |
 | Images | DrawImage and DrawImagePoints of bitmap images (encoded and raw) and of EMF, EMF+ and placeable WMF metafile images, with whole-pixel or fractional source subrectangles inside the image or clamped to transparent | Metafile images without placeable bounds, nested deeper than `MaxMetafileDepth` or under SourceCopy; image effects, sources outside the image whose image attributes tile or clamp to a visible color, alpha images under SourceCopy |
 | Text | DrawDriverString through a `TextBackend`: Unicode code units or glyph indexes at explicit baseline origins or realized advances, fonts in every defined size unit with bold, italic, underline and strikeout styles, any supported brush, translation matrices | DrawString layout; vertical driver strings; driver-string matrices other than translations; Display-unit fonts; backends without `TextBackend` |
@@ -398,8 +400,10 @@ Interpretations where MS-EMFPLUS leaves room:
   The triangle's height and the other anchors' sizes are not given. Neither
   MS-EMFPLUS nor Microsoft's GDI+ reference gives the coordinate system of
   custom cap paths or where an adjustable arrow's vertex sits, so those caps
-  are reported unless `PlayOptions.CustomLineCaps` opts into an interpretation
-  that has not been checked against Windows:
+  are reported unless `PlayOptions.CustomLineCaps` opts into this
+  interpretation. Windows GDI+ draws the adjustable arrow, fill-path end cap
+  and stroke-path start cap it records itself the same way (`rec-caps.emf`,
+  ORACLES.md):
   - Cap space has its origin at the figure's end. +y points outward along
     the line (back along the first segment for a start cap), and +x is +y
     turned a quarter clockwise in pen space. Units are the pen width times
@@ -414,9 +418,10 @@ Interpretations where MS-EMFPLUS leaves room:
     filled, or outlined when FillState is clear, and the figure ends flat at
     the base midpoint.
   - Translucent paint is reported, because how GDI+ composites a cap over
-    the line it overlaps is unknown. A dashed pen's line caps apply at figure ends and its dash
-  cap at dash ends, which Stroke cannot express apart; dashed pens therefore
-  need flat line caps.
+    the line it overlaps is unknown.
+- A dashed pen's line caps apply at figure ends and its dash cap at dash
+  ends, which Stroke cannot express apart; dashed pens therefore need flat
+  line caps.
 - Compound lines (MS-EMFPLUS 2.2.2.9) are parallel bands across the pen
   width. Which side fraction 0 lies on is not specified, so only symmetric
   arrays are drawn, and how bands meet at joins is not either. Each band

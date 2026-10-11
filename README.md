@@ -73,7 +73,7 @@ fallback of an EMF+ Dual file; EMF+ Only files reject that request.
 
 `Decode(record, limits)` is available separately when a consumer wants to manage
 its own state or inspect unsupported families. `Header.SizeInPoints()` returns
-recorded physical dimensions when present. `PlusImage.MetafileBytes()` exposes
+recorded physical dimensions when present. `PlusImage.MetafileBytes(limits)` exposes
 embedded metafiles without recursively parsing them.
 `ExtractEnhancedMetafile` explicitly assembles an EMF carried by WMFC escape
 fragments, checks the complete stream checksum and both containers' framing,
@@ -113,7 +113,7 @@ WMF files without a placeable header need `PlayOptions.Placeable`. Flood fill,
 region inversion and other omissions are never skipped silently.
 
 EMF+ files play their EMF+ records, together with the GDI records inside GetDC
-intervals; `Stream.PreferGDI` plays the GDI fallback of a Dual file instead.
+intervals; `PlayOptions.Stream.PreferGDI` plays the GDI fallback of a Dual file instead.
 EMF+ playback keeps the GDI+ graphics state: Save/Restore, containers,
 world and page transforms, pixel offset, compositing and interpolation modes,
 and clipping with all combine modes and region trees. It resolves solid,
@@ -123,8 +123,8 @@ caps, joins, dashes and dash offsets, shapes, paths, cardinal splines and
 bitmap images. EMF+ driver strings go to a `TextBackend` like GDI text.
 Path gradient fills, symmetric compound pens and separate start and end caps
 are drawn where MS-EMFPLUS defines them. Custom and arrow caps are drawn only
-with `PlayOptions.CustomLineCaps`, under an interpretation not verified against
-Windows. Metafile images are played into their destination under nesting and
+with `PlayOptions.CustomLineCaps`, under an interpretation of geometry MS-EMFPLUS
+leaves open; it matches Windows GDI+ for the caps GDI+ itself records. Metafile images are played into their destination under nesting and
 record budgets. DrawString layout is reported as unsupported.
 
 Region painting (FillRgn, PaintRgn, FrameRgn and the WMF region records),
@@ -154,7 +154,8 @@ used, and OEM, Mac and JOHAB character sets are reported. Without an `Unsupporte
 `Play` stops with `ErrUnsupported`; with one, every skipped operation is reported
 so a partial picture cannot be mistaken for a complete one. COVERAGE.md lists
 the playback inventory and the interpretations chosen where the specifications
-leave room; ORACLES.md records how the output was checked against LibreOffice.
+leave room; ORACLES.md records how the output was checked against LibreOffice
+and Windows GDI and GDI+.
 
 Serializable image-effect records decode all eleven standard effect parameter
 blocks. `Stream` requires a prior effect for effect-enabled `DrawImagePoints`
@@ -167,7 +168,7 @@ Other filter algorithms remain explicitly unsupported by that helper.
 `ParseDIB` handles separate EMF bitmap-info/pixel buffers; `ParsePackedDIB` handles
 WMF packed DIBs. `DIB.Image()` decodes RGB, bitfields, indexed colors, RLE4/RLE8,
 PNG and JPEG. `DIB.AlphaImage()` applies the premultiplied BGRA interpretation
-required by AlphaBlend; ordinary RGB32 is opaque. `PlusImage.Image()` decodes
+required by AlphaBlend; ordinary RGB32 is opaque. `PlusImage.Image(limits)` decodes
 PNG/JPEG/GIF/TIFF and all defined raw EMF+ formats, including indexed palettes, grayscale,
 RGB555/565/ARGB1555 and 48/64-bit RGB/ARGB/PARGB. High-depth pixels retain 16-bit
 channels in Go's `Gray16`, `NRGBA64`, or `RGBA64` image types. These use only Go's standard
@@ -317,10 +318,9 @@ Commits and PR descriptions must contain no AI attribution.
 ## Remaining integration and conformance work
 
 Implement the remaining record/encoding families listed in COVERAGE.md; connect
-`Play` to spine's renderer; add EMF+ DrawString to playback;
-verify the custom line cap interpretation; and compare against Windows GDI/GDI+ when
-available. Windows remains
-the primary playback oracle. LibreOffice agreement covers the generated scenes in
+`Play` to spine's renderer; add EMF+ DrawString to playback; and re-run the
+manual Windows GDI/GDI+ comparison (ORACLES.md) after playback changes. Windows
+remains the primary playback oracle. LibreOffice agreement covers the generated scenes in
 ORACLES.md and diverges from the specifications in several pinned cases. No
 pixel-perfect or full-format rendering claim is made. Fonts and metrics must be
 controlled for meaningful cross-renderer text comparisons.

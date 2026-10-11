@@ -85,7 +85,7 @@ Standard Annex #9 revision 52.
 ## Test-only typesetting dependency
 
 The separate `rendercheck` module, which holds render-oracle tests only, uses
-`github.com/mgilbir/forme` v0.9.0 (MIT License, Copyright (c) 2026 Miguel
+`github.com/mgilbir/forme` v0.10.0, as pinned in `rendercheck/go.mod` (MIT License, Copyright (c) 2026 Miguel
 Eduardo Gil Biraud) to measure and outline text with the system's Liberation
 Sans. It is not a dependency of the gowemf module and no forme source is
 copied. Fonts are read from the system and never committed.

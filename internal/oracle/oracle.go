@@ -82,7 +82,7 @@ func Environment(t testing.TB, root string) (work, version string) {
 		t.Fatal(err)
 	}
 	version = strings.TrimSpace(string(out))
-	metadata, _ := json.MarshalIndent(map[string]string{"libreoffice": version, "font": strings.TrimSpace(string(font)), "coverage": "generated raster transfers and GDI playback scenes"}, "", "  ")
+	metadata, _ := json.MarshalIndent(map[string]string{"libreoffice": version, "font": strings.TrimSpace(string(font)), "coverage": "generated raster transfers, TIFFs, and GDI, EMF+ and text playback scenes"}, "", "  ")
 	if err := os.WriteFile(filepath.Join(work, "environment.json"), metadata, 0600); err != nil {
 		t.Fatal(err)
 	}

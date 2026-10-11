@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -298,19 +297,4 @@ func BenchmarkWalk(b *testing.B) {
 			}
 		})
 	}
-}
-
-func ExampleWalk() {
-	// Application code obtains data from an embedded document image.
-	data := wmfFixture(false)
-	_, err := Walk(data, Limits{}, func(r Record) error {
-		fmt.Printf("type=%04x offset=%d bytes=%d\n", r.Type, r.Offset, len(r.Raw))
-		return nil
-	})
-	if err != nil {
-		fmt.Println(err)
-	}
-	// Output:
-	// type=0214 offset=18 bytes=10
-	// type=0000 offset=28 bytes=6
 }

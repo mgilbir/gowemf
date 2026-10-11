@@ -155,6 +155,23 @@ pixels enclosing it, clipped to the image of the exact rectangle (see
 
 ## Metafile images
 
+```mermaid
+sequenceDiagram
+    participant O as Play (outer)
+    participant C as child player
+    participant N as nested backend
+    participant B as your backend
+    O->>O: first use of the image object:<br/>MetafileBytes, Walk, image size
+    O->>O: depth < MaxMetafileDepth?
+    O->>O: count records against<br/>MaxEmbeddedRecords (shared)
+    O->>C: start from default state,<br/>Destination = image size
+    loop each embedded command
+      C->>N: FillPath / StrokePath / DrawImage / …
+      N->>B: same call, mapped into the outer<br/>destination, with the outer clip added
+    end
+    C-->>O: omissions reported as<br/>"embedded metafile: …" on the drawing record
+```
+
 A metafile image (MS-EMFPLUS 2.2.2.27) is played from its own default
 state into image pixels, which MS-EMFPLUS leaves undefined. As GDI+
 records and draws them: the logical units of placeable WMF bounds, or for

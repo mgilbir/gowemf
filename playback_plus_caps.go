@@ -4,8 +4,8 @@ import "math"
 
 // Custom line caps (MS-EMFPLUS 2.2.1.2) are drawn only with
 // PlayOptions.CustomLineCaps, because neither MS-EMFPLUS nor Microsoft's
-// GDI+ reference defines their geometry. The interpretation used, unverified
-// against Windows:
+// GDI+ reference defines their geometry. The interpretation used, which
+// matches GDI+ for the caps of rec-caps.emf (ORACLES.md):
 //
 //   - A cap is built in cap space: the origin is the end point of the figure
 //     and +y points outward along the line (back along the first segment for

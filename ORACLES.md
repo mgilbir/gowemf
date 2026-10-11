@@ -8,8 +8,9 @@ Central, verifies exact sizes and SHA-256 digests, compiles the locally written
 uses public APIs only; no POI implementation source was ported. The library and
 ordinary Go tests require no Java or third-party runtime.
 
-Every oracle process has a 30-second timeout, a 256 MiB JVM heap, a 32 MiB stdout
-limit and a 64 KiB stderr limit. JARs and compiled classes live in ignored
+The record-dump process has a 30-second timeout, a 256 MiB JVM heap, a 32 MiB
+stdout limit and a 64 KiB stderr limit. The render oracles' POI and LibreOffice
+processes share a 64 KiB combined output limit. JARs and compiled classes live in ignored
 `.external/oracle/`; their embedded licenses/NOTICE resources remain intact.
 The pinned versions, sizes and digests are in `internal/corpus/oracle.go`.
 
@@ -34,7 +35,8 @@ Bezier normalization, text shaping, complete object semantics, or rendered pixel
 Generated pen records additionally compare both adjustable-arrow custom caps
 against POI's public record dump: dimensions, inset, fill state, styles, miter
 limit and width scale. Default cap paths and extended raw pixel values have
-spec-derived generated tests; there is no Windows render-equivalence claim.
+spec-derived generated tests. Cap rendering is compared with Windows GDI+ under
+"Windows GDI and GDI+".
 
 Intentional normalization:
 
@@ -235,8 +237,8 @@ Dashes are likewise left to backends and not compared.
 
 Generated inputs, PNGs, wrapper documents and environment information remain
 ignored under `.external/`; CI retains them as short-lived diagnostic artifacts.
-No GPL/MPL implementation source is read or ported. Windows GDI/GDI+ remains
-unavailable and no Windows render-equivalence claim is made.
+No GPL/MPL implementation source is read or ported. Comparisons with Windows
+are under "Windows GDI and GDI+".
 
 ### Fill scenes
 
@@ -345,7 +347,8 @@ caps are drawn reversed relative to the line, with an asymmetric cap
 re-centered. Custom caps therefore stay reported unless
 `PlayOptions.CustomLineCaps` opts into the interpretation in COVERAGE.md.
 `lo-plus-custom-cap.emf` pins LibreOffice's reversed path cap against that
-interpretation. Neither has been checked against Windows. Fifteen planted
+interpretation. Windows GDI+ draws the caps it records itself as the
+interpretation does (`rec-caps.emf` under "Windows GDI and GDI+"). Fifteen planted
 custom-cap defects were each caught by the offline tests, including both axis
 directions, insets, scales, line-versus-fill preference, the arrow geometry
 and the opt-in itself.
@@ -381,7 +384,7 @@ code, and every earlier scene was re-verified against LibreOffice afterwards.
 ### Text scenes
 
 Text needs a typesetter, so its oracle tests live in the separate `rendercheck`
-module, which depends on forme (v0.9.0) and requires Go 1.26 without either
+module, which depends on forme (pinned in `rendercheck/go.mod`) and requires Go 1.26 without either
 reaching gowemf's own module. Its backend shares `internal/raster` with the
 scene tests and sets text from the system's Liberation Sans with GDI's
 TrueType conventions: a negative LOGFONT height is the em, a positive one the

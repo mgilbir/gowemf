@@ -1,5 +1,7 @@
-// Package codepage parses the MBTABLE of a Windows best-fit code page file
-// (MS-UCODEREF 2.2.2.1). It is used only to generate and verify tables.
+// Package codepage parses Windows best-fit code page files (MS-UCODEREF
+// 2.2.2.1): the MBTABLE of a single-byte code page, and the MBTABLE,
+// DBCSRANGE and DBCSTABLE sections of a double-byte one. It is used only to
+// generate and verify tables.
 package codepage
 
 import (

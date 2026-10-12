@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/mgilbir/gowemf/internal/corpus"
@@ -96,7 +98,7 @@ func fetchURL(client *http.Client, root string, f corpus.File, url string) error
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	resp, err := client.Get(url)
+	resp, err := get(client, url)
 	if err != nil {
 		return err
 	}
@@ -128,4 +130,62 @@ func fetchURL(client *http.Client, root string, f corpus.File, url string) error
 		return fmt.Errorf("download fails pinned size or SHA-256 check")
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// Rate-limited downloads are retried: CI starts many jobs at once against
+// the same hosts. Only 429 and 503, which carry Retry-After, are retried, at
+// most maxAttempts times in all; a server asking for more than maxRetryWait
+// fails the download instead of stalling the job.
+const (
+	maxAttempts  = 4
+	maxRetryWait = 30 * time.Second
+)
+
+// sleep is replaced in tests.
+var sleep = time.Sleep
+
+func get(client *http.Client, url string) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := client.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
+			return resp, nil
+		}
+		wait, waitErr := retryDelay(resp.Header.Get("Retry-After"), attempt, time.Now())
+		// Drain a bounded amount so the connection can be reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		if attempt == maxAttempts {
+			return nil, fmt.Errorf("HTTP status %d after %d attempts", resp.StatusCode, attempt)
+		}
+		if waitErr != nil {
+			return nil, fmt.Errorf("HTTP status %d: %w", resp.StatusCode, waitErr)
+		}
+		fmt.Fprintf(os.Stderr, "HTTP status %d; retrying in %v\n", resp.StatusCode, wait.Round(time.Millisecond))
+		sleep(wait)
+	}
+}
+
+// retryDelay honors Retry-After as delay-seconds or an HTTP-date (RFC 9110
+// section 10.2.3). Without a usable value it backs off exponentially from one
+// second, with jitter so simultaneous jobs spread out.
+func retryDelay(value string, attempt int, now time.Time) (time.Duration, error) {
+	var d time.Duration
+	if secs, err := strconv.ParseInt(value, 10, 64); err == nil && secs >= 0 {
+		if secs > int64(maxRetryWait/time.Second) {
+			return 0, fmt.Errorf("server asked to retry after %d s, more than %v", secs, maxRetryWait)
+		}
+		d = time.Duration(secs) * time.Second
+	} else if t, err := http.ParseTime(value); err == nil {
+		d = max(t.Sub(now), 0)
+		if d > maxRetryWait {
+			return 0, fmt.Errorf("server asked to retry at %v, more than %v away", t, maxRetryWait)
+		}
+	} else {
+		base := time.Second << (attempt - 1)
+		d = base + rand.N(base/2)
+	}
+	return d, nil
 }

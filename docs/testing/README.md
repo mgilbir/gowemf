@@ -76,7 +76,10 @@ Ordinary tests are offline and build their inputs in Go; no external binary
 fixtures are tracked. Downloads use only the Go standard library, fixed
 upstream revisions, exact byte lengths and SHA-256 digests, bounded reads,
 timeouts, and verified temporary files; a corrupt cached file is refused, and
-missing or corrupt inputs fail rather than skip. Everything downloaded or
+missing or corrupt inputs fail rather than skip. Rate-limited requests (HTTP
+429 or 503) are retried up to four attempts in all, honoring `Retry-After` up
+to 30 seconds and otherwise backing off from one second with jitter, because
+CI starts many jobs against the same hosts at once. Everything downloaded or
 rendered lives under the ignored `.external/` directory, and CI keeps render
 artifacts for seven days. Manifests: `internal/corpus/manifest.go` (POI
 corpus), `oracle.go` (POI jars), `codepages.go` and `unicode.go`. Upstream
